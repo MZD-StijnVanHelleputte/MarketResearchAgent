@@ -1,0 +1,420 @@
+"""Subdomain decomposition for the 3-tier hierarchical synthesis.
+
+Given a merged per-domain chapter, enumerate the entities/subdomains it covers
+(each competitor, each commodity, each distributor, …) and assemble the
+entity-specific evidence used to write a Tier-1 leaf analysis.
+
+Design notes:
+  - Collection is unchanged: all evidence already lives in the per-run Chroma
+    collection (`collected_{run_id}`) plus the MergedChapter's datasets/figures.
+    This module only *re-slices* that evidence per entity at synthesis time.
+  - Entities come from the plan's entity_manifest (explicitly researched) and the
+    version-controlled master data, filtered to those actually present in the
+    collected evidence so we never emit empty sub-sections.
+  - macro_geopolitics and general_search have no fixed master-data entity list,
+    so their "entities" are themes extracted from this run's actual evidence via
+    one LLM call (see `_theme_candidates`). Domains that fail to yield >=2 themes
+    (or any other unlisted domain) return [] so the caller falls back to the
+    legacy single-chapter synthesis path.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+
+from config import settings
+from core.schemas import MergedChapter
+from models.llm_client import LLMClient
+from models.usage import llm_usage
+from prompts.synthesize_prompt import THEME_EXTRACTION_TEMPLATE
+
+logger = logging.getLogger(__name__)
+
+_THEMATIC_DOMAINS = {"macro_geopolitics", "general_search"}
+
+
+@dataclass
+class Subdomain:
+    """One entity within a domain, plus everything needed to find its evidence."""
+
+    key: str                       # stable key, e.g. "CAT", "GC", "Sandvik"
+    label: str                     # human label, e.g. "Caterpillar Inc."
+    aliases: set[str] = field(default_factory=set)  # strings that identify the entity
+    query_hint: str = ""           # retrieval query seed
+
+    def __post_init__(self) -> None:
+        self.aliases = {a for a in self.aliases if a and len(a) >= 2}
+        if not self.query_hint:
+            self.query_hint = self.label
+
+
+@dataclass
+class EntityEvidence:
+    """Evidence slice handed to the Tier-1 synthesis for one subdomain."""
+
+    retrieved_chunks: list = field(default_factory=list)   # clean Chunk objects
+    datasets: list[dict] = field(default_factory=list)
+    figures: dict[str, str] = field(default_factory=dict)
+    citations: list[str] = field(default_factory=list)
+    injection_flags: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Enumeration
+# ---------------------------------------------------------------------------
+
+def enumerate_subdomains(
+    domain: str,
+    merged_chapter: MergedChapter,
+    plan: dict,
+    masterdata,
+) -> tuple[list[Subdomain], dict]:
+    """Return the entities to decompose *domain* into, plus any LLM usage incurred.
+
+    Returns ([], {}) for non-decomposable domains and for decomposable domains
+    where fewer than 2 entities/themes have supporting evidence — in both cases
+    the caller keeps today's single-chapter behavior.
+    """
+    if domain not in settings.synthesis.decomposable_domains:
+        return [], {}
+
+    evidence_text = _evidence_text(merged_chapter)
+    usage: dict = {}
+
+    if domain in _THEMATIC_DOMAINS:
+        try:
+            candidates, usage = _theme_candidates(domain, merged_chapter)
+        except Exception as exc:  # never let enumeration break synthesis
+            logger.warning("enumerate_subdomains(%s): theme extraction failed: %s", domain, exc)
+            return [], {}
+    else:
+        manifest = plan.get("entity_manifest", {}) if isinstance(plan, dict) else {}
+        builder = _CANDIDATE_BUILDERS.get(domain)
+        if builder is None:
+            return [], {}
+        try:
+            candidates = builder(manifest, masterdata)
+        except Exception as exc:  # never let enumeration break synthesis
+            logger.warning("enumerate_subdomains(%s): candidate build failed: %s", domain, exc)
+            return [], {}
+
+    # Keep entities that are actually present in the collected evidence so we
+    # don't emit empty sub-sections (a planned ticker with no returned data).
+    present = [c for c in candidates if _mentions(evidence_text, c.aliases)]
+
+    # De-duplicate by key, preserving order.
+    seen: set[str] = set()
+    unique: list[Subdomain] = []
+    for c in present:
+        if c.key not in seen:
+            seen.add(c.key)
+            unique.append(c)
+
+    cap = settings.synthesis.max_subdomains_per_domain
+    if len(unique) > cap:
+        logger.info(
+            "enumerate_subdomains(%s): capping %d entities to %d",
+            domain, len(unique), cap,
+        )
+        unique = unique[:cap]
+
+    # A single entity adds no hierarchy over the rollup — treat as degenerate.
+    return (unique, usage) if len(unique) >= 2 else ([], usage)
+
+
+# ---------------------------------------------------------------------------
+# Evidence assembly
+# ---------------------------------------------------------------------------
+
+def assemble_entity_evidence(
+    sub: Subdomain,
+    merged_chapter: MergedChapter,
+    retriever,
+    collection: str,
+    guardrails,
+    query: str,
+    top_k: int | None = None,
+) -> EntityEvidence:
+    """Slice the domain's evidence down to one entity for its Tier-1 analysis."""
+    evidence = EntityEvidence()
+
+    # 1. Entity-focused retrieval from the per-run collected store.
+    retrieval_query = f"{sub.query_hint}: {query}"
+    try:
+        raw_chunks, _stale = retriever.retrieve(
+            retrieval_query,
+            collection,
+            top_k=top_k if top_k is not None else settings.retrieval.top_k,
+        )
+    except Exception as exc:
+        logger.debug("assemble_entity_evidence: retrieval failed for %s: %s", sub.key, exc)
+        raw_chunks = []
+
+    # 2. Filter injection-tainted chunks (same guard as the domain path).
+    for chunk in raw_chunks:
+        chunk_text = getattr(chunk, "text", None) or (
+            chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+        )
+        warning = guardrails.scan_for_injection(chunk_text)
+        if warning:
+            evidence.injection_flags.append(
+                f"Chunk filtered ({merged_chapter.domain}/{sub.key}): {warning}"
+            )
+        else:
+            evidence.retrieved_chunks.append(chunk)
+
+    # 3. Datasets / figures / citations attributable to this entity.
+    evidence.datasets = [
+        ds for ds in merged_chapter.datasets if _dataset_mentions(ds, sub.aliases)
+    ]
+    evidence.figures = {
+        k: v for k, v in merged_chapter.figures.items()
+        if _mentions(f"{k} {v}".lower(), sub.aliases)
+    }
+    evidence.citations = [
+        c for c in merged_chapter.citations if _mentions(c.lower(), sub.aliases)
+    ]
+    return evidence
+
+
+# ---------------------------------------------------------------------------
+# Per-domain candidate builders
+# ---------------------------------------------------------------------------
+
+def _competition_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    competitors = masterdata.get_competitors()
+    by_ticker = {
+        str(c.get("ticker", "")).upper(): c for c in competitors if c.get("ticker")
+    }
+    cands: list[Subdomain] = []
+
+    # Master-data competitors are the canonical, clean-label set.
+    for c in competitors:
+        name = c.get("name", "")
+        ticker = str(c.get("ticker", "") or "")
+        if not name:
+            continue
+        cands.append(Subdomain(
+            key=ticker.upper() or name,
+            label=name,
+            aliases={name, ticker},
+            query_hint=f"{name} ({ticker}) competitor strategy financials",
+        ))
+
+    # Any planned ticker not in master data (e.g. a newly surfaced rival).
+    for t in manifest.get("tickers", []) or []:
+        tu = str(t).strip().upper()
+        if tu and tu not in by_ticker:
+            cands.append(Subdomain(
+                key=tu, label=tu, aliases={tu},
+                query_hint=f"{tu} competitor",
+            ))
+    return cands
+
+
+def _commodities_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    commodities = masterdata.get_commodities()
+    cands: list[Subdomain] = []
+    for c in commodities:
+        name = c.get("Name", "")
+        ticker = str(c.get("Ticker", "") or "")
+        if not name:
+            continue
+        cands.append(Subdomain(
+            key=ticker or name,
+            label=name,
+            aliases={name, ticker, name.split()[0]},  # "Gold" from "Gold Futures"
+            query_hint=f"{name} price trend outlook",
+        ))
+    # Free-text commodities from the manifest (e.g. "copper", "Gold (GC=F)").
+    for raw in manifest.get("commodities", []) or []:
+        label = str(raw).strip()
+        if label:
+            cands.append(Subdomain(
+                key=label.lower(), label=label, aliases={label, label.split()[0]},
+                query_hint=f"{label} price outlook",
+            ))
+    return cands
+
+
+def _distributors_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    cands: list[Subdomain] = []
+    for d in masterdata.get_distributors():
+        name = d.get("name", "")
+        if not name:
+            continue
+        cands.append(Subdomain(
+            key=name,
+            label=name,
+            aliases={name, d.get("parent", "")},
+            query_hint=f"{name} dealer distribution channel",
+        ))
+    return cands
+
+
+def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    cands: list[Subdomain] = []
+    # Mine operators are Komatsu's primary customer base.
+    seen: set[str] = set()
+    for s in masterdata.get_sites():
+        operator = s.get("operator", "")
+        op_ticker = str(s.get("operator_ticker", "") or "")
+        if operator and operator not in seen:
+            seen.add(operator)
+            cands.append(Subdomain(
+                key=op_ticker.upper() or operator,
+                label=operator,
+                aliases={operator, op_ticker},
+                query_hint=f"{operator} capex equipment spend",
+            ))
+    # Plus any researched companies from the manifest.
+    for c in manifest.get("companies", []) or []:
+        label = str(c).strip()
+        if label:
+            cands.append(Subdomain(
+                key=label, label=label, aliases={label},
+                query_hint=f"{label} capital expenditure",
+            ))
+    return cands
+
+
+def _mining_projects_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    cands: list[Subdomain] = []
+    for s in masterdata.get_sites():
+        name = s.get("name", "")
+        if not name:
+            continue
+        cands.append(Subdomain(
+            key=name,
+            label=name,
+            aliases={name, s.get("operator", ""), str(s.get("operator_ticker", "") or "")},
+            query_hint=f"{name} mine project {s.get('operator', '')}",
+        ))
+    for site in manifest.get("mine_sites", []) or []:
+        label = str(site).strip()
+        if label:
+            cands.append(Subdomain(
+                key=label, label=label, aliases={label},
+                query_hint=f"{label} mine development",
+            ))
+    return cands
+
+
+def _theme_candidates(domain: str, merged_chapter: MergedChapter) -> tuple[list[Subdomain], dict]:
+    """LLM-derived themes for domains with no fixed master-data entity list.
+
+    Returns ([], {}) when evidence is too thin to bother calling the LLM, and
+    ([], usage) when the LLM call fails, returns malformed JSON, or yields
+    fewer than 2 themes — the caller's degenerate-entity check (`>= 2`) also
+    re-applies this after the alias-presence filter, so this function does not
+    need to duplicate that threshold strictly, but short-circuits cheaply here.
+    """
+    word_count = len(merged_chapter.text.split())
+    if word_count < settings.synthesis.theme_extraction_min_evidence_words:
+        return [], {}
+
+    evidence_text = _evidence_text(merged_chapter)[
+        : settings.synthesis.theme_extraction_max_evidence_chars
+    ]
+    prompt = THEME_EXTRACTION_TEMPLATE.format(domain=domain, evidence_text=evidence_text)
+
+    llm = LLMClient()
+    resp = llm.complete(
+        [{"role": "user", "content": prompt}],
+        temperature=settings.synthesis.theme_extraction_temperature,
+    )
+    usage = llm_usage(resp.usage)
+
+    data = _load_json(resp.content or "")
+    themes = data.get("themes") if isinstance(data, dict) else None
+    if not isinstance(themes, list):
+        return [], usage
+
+    candidates: list[Subdomain] = []
+    for t in themes:
+        if not isinstance(t, dict):
+            continue
+        label = str(t.get("label", "")).strip()
+        if not label:
+            continue
+        aliases = {str(a).strip() for a in (t.get("aliases") or []) if str(a).strip()}
+        candidates.append(Subdomain(
+            key=_slugify(label),
+            label=label,
+            aliases=aliases | {label},
+            query_hint=f"{label} ({domain})",
+        ))
+    return candidates, usage
+
+
+def _load_json(raw: str) -> dict | None:
+    """Parse a JSON object from an LLM response, tolerating markdown code fences."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = "\n".join(
+            line for line in text.splitlines() if not line.startswith("```")
+        ).strip()
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _slugify(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    return slug or label.lower()
+
+
+_CANDIDATE_BUILDERS = {
+    "competition": _competition_candidates,
+    "commodities": _commodities_candidates,
+    "distributors": _distributors_candidates,
+    "customers": _customers_candidates,
+    "mining_projects": _mining_projects_candidates,
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _evidence_text(merged_chapter: MergedChapter) -> str:
+    """Lowercased blob of all evidence in a chapter, for presence checks."""
+    parts = [merged_chapter.text]
+    for k, v in merged_chapter.figures.items():
+        parts.append(f"{k} {v}")
+    parts.extend(merged_chapter.citations)
+    try:
+        parts.append(json.dumps(merged_chapter.datasets, default=str))
+    except Exception:
+        pass
+    return " ".join(parts).lower()
+
+
+def _dataset_mentions(dataset: dict, aliases: set[str]) -> bool:
+    try:
+        blob = json.dumps(dataset, default=str).lower()
+    except Exception:
+        blob = str(dataset).lower()
+    return _mentions(blob, aliases)
+
+
+def _mentions(text: str, aliases: set[str]) -> bool:
+    """True if any alias (>=2 chars) appears in *text* (lowercased) on word boundaries.
+
+    Boundaries are alphanumeric-only (not `\\w`, which includes "_"), so a
+    ticker like "CAT" still matches inside a figure key such as "CAT_revenue_bn"
+    while a short ticker like "DE" does not false-match inside "expanded".
+    Lookarounds (rather than `\\b`) handle aliases containing punctuation such
+    as "SAND.ST" or "VOLV-B.ST".
+    """
+    for alias in aliases:
+        a = alias.strip().lower()
+        if len(a) < 2:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(a)}(?![A-Za-z0-9])", text):
+            return True
+    return False

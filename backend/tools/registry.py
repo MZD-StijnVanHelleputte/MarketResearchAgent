@@ -1,0 +1,251 @@
+from config import settings as _settings
+from tools.agricultural_commodity_prices_tool import AgriculturalCommodityPricesTool
+from tools.analyst_estimates_tool import AnalystEstimatesTool
+from tools.balance_sheet_tool import BalanceSheetTool
+from tools.base import BaseTool
+from tools.broad_commodity_cycle_tool import BroadCommodityCycleTool
+from tools.cash_flow_tool import CashFlowTool
+from tools.company_financials_tool import CompanyFinancialsTool
+from tools.company_rating_tool import CompanyRatingTool
+from tools.earnings_calendar_tool import EarningsCalendarTool
+from tools.earnings_surprises_tool import EarningsSurprisesTool
+from tools.earnings_transcript_tool import EarningsTranscriptTool
+from tools.energy_cost_prices_tool import EnergyCostPricesTool
+from tools.equity_financials_tool import EquityFinancialsTool
+from tools.equity_history_tool import EquityHistoryTool
+from tools.equity_price_tool import EquityPriceTool
+from tools.episodic_memory_tool import EpisodicMemoryTool
+from tools.financial_ratios_tool import FinancialRatiosTool
+from tools.fx_rates_tool import FxRatesTool
+from tools.income_statement_tool import IncomeStatementTool
+from tools.industry_knowledge_tool import IndustryKnowledgeTool
+from tools.insider_transactions_tool import InsiderTransactionsTool
+from tools.fred_category_tool import FredCategoryTool
+from tools.fred_observations_tool import FredObservationsTool
+from tools.fred_release_series_tool import FredReleaseSeriesToolCls
+from tools.fred_releases_tool import FredReleasesTool
+from tools.fred_search_tool import FredSearchTool
+from tools.fred_series_updates_tool import FredSeriesUpdatesTool
+from tools.fred_tags_series_tool import FredTagsSeriesTool
+from tools.macro_indicators_tool import MacroIndicatorsTool
+from tools.masterdata_lookup_tool import MasterdataLookupTool
+from tools.mining_metals_prices_tool import MiningMetalsPricesTool
+from tools.news_search_tool import NewsSearchTool
+from tools.news_sentiment_tool import NewsSentimentTool
+from tools.news_sources_tool import NewsSourcesTool
+from tools.news_top_headlines_tool import NewsTopHeadlinesTool
+from tools.press_releases_tool import PressReleasesTool
+from tools.sec_filings_tool import SecFilingsTool
+from tools.stock_peers_tool import StockPeersTool
+from tools.stock_screener_tool import StockScreenerTool
+from tools.web_crawl_tool import WebCrawlTool
+from tools.web_extract_tool import WebExtractTool
+from tools.web_map_tool import WebMapTool
+from tools.web_research_tool import WebResearchTool
+from tools.web_search_tool import WebSearchTool
+
+# Shared tool instances (same object in multiple stage lists)
+_episodic = EpisodicMemoryTool()
+_knowledge = IndustryKnowledgeTool()
+_web_search = WebSearchTool()
+_news_search = NewsSearchTool()
+_news_top_headlines = NewsTopHeadlinesTool()
+_news_sources = NewsSourcesTool()
+_web_extract = WebExtractTool()
+_masterdata = MasterdataLookupTool()
+
+# Stage-based tool lists — the tool_router selects the correct list per stage.
+# The same instance may appear in multiple lists.
+UNDERSTAND_TOOLS: list[BaseTool] = [
+    _knowledge,
+    _episodic,
+    _web_search,      # live competitor / entity discovery
+    _news_search,     # recent headlines to frame plans
+    _news_top_headlines,  # breaking news to frame plans
+    _web_extract,     # follow a specific URL (e.g., investor page)
+    _masterdata,      # resolve entities against master data first
+]
+COLLECT_TOOLS: list[BaseTool] = [
+    _news_search,
+    _news_top_headlines,
+    _news_sources,
+    MiningMetalsPricesTool(),
+    EnergyCostPricesTool(),
+    BroadCommodityCycleTool(),
+    AgriculturalCommodityPricesTool(),
+    FxRatesTool(),
+    CompanyFinancialsTool(),
+    SecFilingsTool(),
+    EquityPriceTool(),
+    EquityHistoryTool(),
+    EquityFinancialsTool(),
+    EarningsCalendarTool(),
+    NewsSentimentTool(),
+    EarningsTranscriptTool(),
+    InsiderTransactionsTool(),
+    _web_search,
+    _web_extract,
+    WebCrawlTool(),
+    WebMapTool(),
+    WebResearchTool(),
+    _masterdata,
+    MacroIndicatorsTool(),
+    FredSearchTool(),
+    FredObservationsTool(),
+    FredReleasesTool(),
+    FredReleaseSeriesToolCls(),
+    FredCategoryTool(),
+    FredTagsSeriesTool(),
+    FredSeriesUpdatesTool(),
+    IncomeStatementTool(),
+    BalanceSheetTool(),
+    CashFlowTool(),
+    FinancialRatiosTool(),
+    AnalystEstimatesTool(),
+    StockPeersTool(),
+    CompanyRatingTool(),
+    EarningsSurprisesTool(),
+    PressReleasesTool(),
+    StockScreenerTool(),
+]
+SYNTHESIZE_TOOLS: list[BaseTool] = [_knowledge, _episodic]
+
+
+def _tier_filter(tools: list[BaseTool]) -> list[BaseTool]:
+    """Drop tools that require a premium subscription when the matching tier is 'free'."""
+    keep = []
+    for t in tools:
+        req = getattr(t, "requires_premium", None)
+        if req == "fmp" and _settings.fmp_tier == "free":
+            continue
+        if req == "alpha_vantage" and _settings.alpha_vantage_tier == "free":
+            continue
+        keep.append(t)
+    return keep
+
+
+COLLECT_TOOLS = _tier_filter(COLLECT_TOOLS)
+
+# Flat name → tool lookup (built from all stage lists)
+_registry: dict[str, BaseTool] = {
+    t.name: t
+    for stage_list in (UNDERSTAND_TOOLS, COLLECT_TOOLS, SYNTHESIZE_TOOLS)
+    for t in stage_list
+}
+
+
+def get(name: str) -> BaseTool:
+    if name not in _registry:
+        raise KeyError(f"Tool '{name}' is not registered.")
+    return _registry[name]
+
+
+def all_tools() -> list[BaseTool]:
+    return list(_registry.values())
+
+
+# Domain → tool name mapping (authoritative reference for domain sub-agents).
+# The actual per-run filter uses plan["tool_calls"][].domain; this is for
+# documentation and stage_tools() filtering.
+DOMAIN_TOOLS: dict[str, list[str]] = {
+    "competition": [
+        "get_company_financials",
+        "search_sec_filings",
+        "get_equity_price",
+        "get_equity_history",
+        "get_equity_financials",
+        "news_search",
+        "news_top_headlines",
+        "get_earnings_calendar",
+        "get_news_sentiment",
+        "get_earnings_transcript",
+        "get_insider_transactions",
+        "web_extract",
+        "web_crawl",
+        "web_map",
+        "get_income_statement",
+        "get_balance_sheet",
+        "get_cash_flow",
+        "get_financial_ratios",
+        "get_analyst_estimates",
+        "get_stock_peers",
+        "get_company_rating",
+        "get_earnings_surprises",
+        "get_press_releases",
+        "screen_stocks",
+    ],
+    "distributors": ["masterdata_lookup", "news_search", "news_top_headlines", "web_search"],
+    "customers": [
+        "masterdata_lookup",
+        "get_company_financials",
+        "get_equity_price",
+        "get_equity_history",
+        "get_equity_financials",
+        "news_search",
+        "news_top_headlines",
+        "web_search",
+        "get_energy_cost_prices",
+        "get_broad_commodity_cycle",
+        "get_fx_rates",
+        "get_income_statement",
+        "get_balance_sheet",
+        "get_cash_flow",
+        "get_financial_ratios",
+        "get_analyst_estimates",
+        "get_company_rating",
+        "get_press_releases",
+    ],
+    "mining_projects": [
+        "search_sec_filings",
+        "get_equity_price",
+        "get_equity_history",
+        "get_equity_financials",
+        "news_search",
+        "news_top_headlines",
+        "web_search",
+        "get_mining_metals_prices",
+        "get_energy_cost_prices",
+        "get_news_sentiment",
+        "get_insider_transactions",
+        "web_extract",
+        "web_crawl",
+        "web_map",
+        "web_research",
+        "get_income_statement",
+        "get_cash_flow",
+        "get_press_releases",
+        "get_earnings_surprises",
+        "screen_stocks",
+    ],
+    "commodities": [
+        "get_mining_metals_prices",
+        "get_energy_cost_prices",
+        "get_broad_commodity_cycle",
+        "get_agricultural_commodity_prices",
+    ],
+    "macro_geopolitics": [
+        "get_macro_indicator",
+        "search_fred_series",
+        "get_fred_observations",
+        "list_fred_releases",
+        "get_fred_release_series",
+        "browse_fred_category",
+        "get_fred_series_by_tags",
+        "get_fred_series_updates",
+        "news_search",
+        "news_top_headlines",
+        "web_search",
+        "get_agricultural_commodity_prices",
+        "get_fx_rates",
+        "web_research",
+    ],
+    "general_search": [
+        "web_search",
+        "news_top_headlines",
+        "news_sources",
+        "get_news_sentiment",
+        "web_extract",
+        "web_map",
+        "web_research",
+    ],
+}

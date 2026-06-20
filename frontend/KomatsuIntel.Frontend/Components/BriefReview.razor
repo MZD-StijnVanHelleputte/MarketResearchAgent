@@ -1,0 +1,175 @@
+@* Gate 3 — assembled brief; user flags sections for removal or deeper coverage *@
+
+<MudPaper Elevation="1" Class="pa-4">
+    <MudStack Spacing="3">
+
+        @* Header *@
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudAvatar Color="Color.Primary" Size="Size.Small"
+                       Style="font-size:0.75rem;font-weight:700;">
+                G3
+            </MudAvatar>
+            <MudText Typo="Typo.subtitle1" Style="font-weight:700;">
+                Gate 3 — Brief Review
+            </MudText>
+        </MudStack>
+
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Review the assembled brief. Flag sections for removal or deeper
+            coverage on the next run, then approve to generate the PDF.
+        </MudText>
+
+        @* Executive summary *@
+        <MudPaper Elevation="0" Class="pa-3 executive-summary-card">
+            <MudStack Spacing="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudIcon Icon="@Icons.Material.Filled.Summarize"
+                             Color="Color.Primary" Size="Size.Small" />
+                    <MudText Typo="Typo.overline" Color="Color.Primary"
+                             Style="font-weight:700;letter-spacing:0.1em;">
+                        Executive Summary
+                    </MudText>
+                </MudStack>
+                <MudText Typo="Typo.body2" Style="line-height:1.7;">
+                    @Data.ExecutiveSummary
+                </MudText>
+            </MudStack>
+        </MudPaper>
+
+        @* Sections *@
+        <MudText Typo="Typo.subtitle2" Style="font-weight:700;">
+            Chapters (@Data.Sections.Count)
+        </MudText>
+
+        @foreach (var (section, idx) in Data.Sections.Select((s, i) => (s, i)))
+        {
+            var flagged = _flagged.Contains(idx);
+            var deepCov = _deepCoverage.Contains(idx);
+
+            <MudPaper Elevation="0" Class="pa-3"
+                      Style="@($"border:1px solid {(flagged ? "#EF4444" : deepCov ? "#F59E0B" : "#E5E7EB")};" +
+                               "border-radius:8px;transition:border-color 0.2s;")">
+                <MudStack Spacing="2">
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center"
+                              Justify="Justify.SpaceBetween">
+                        <MudText Typo="Typo.subtitle2" Style="font-weight:700;">
+                            @section.Title
+                        </MudText>
+                        <MudStack Row="true" Spacing="1">
+                            <MudTooltip Text="Flag for removal from next run">
+                                <MudIconButton Icon="@(flagged
+                                                       ? Icons.Material.Filled.Flag
+                                                       : Icons.Material.Outlined.Flag)"
+                                               Color="@(flagged ? Color.Error : Color.Default)"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ToggleFlag(idx))" />
+                            </MudTooltip>
+                            <MudTooltip Text="Request deeper coverage">
+                                <MudIconButton Icon="@(deepCov
+                                                       ? Icons.Material.Filled.ZoomIn
+                                                       : Icons.Material.Outlined.ZoomIn)"
+                                               Color="@(deepCov ? Color.Warning : Color.Default)"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ToggleDeepCoverage(idx))" />
+                            </MudTooltip>
+                        </MudStack>
+                    </MudStack>
+
+                    @if (section.Subsections is { Count: > 0 })
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
+                            Entity analyses (@section.Subsections.Count)
+                        </MudText>
+                        <MudExpansionPanels Elevation="0" Dense="true" Class="mb-1">
+                            @foreach (var sub in section.Subsections)
+                            {
+                                <MudExpansionPanel Text="@sub.Title">
+                                    <MudText Typo="Typo.body2" Style="line-height:1.65;color:#374151;">
+                                        @sub.Content
+                                    </MudText>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">
+                            Landscape summary
+                        </MudText>
+                    }
+
+                    <MudText Typo="Typo.body2" Style="line-height:1.65;color:#374151;">
+                        @section.Content
+                    </MudText>
+
+                    @if (flagged)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error"
+                                 Icon="@Icons.Material.Filled.Flag"
+                                 Variant="Variant.Filled">
+                            Flagged for removal
+                        </MudChip>
+                    }
+                    @if (deepCov)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning"
+                                 Icon="@Icons.Material.Filled.ZoomIn"
+                                 Variant="Variant.Filled">
+                            Deeper coverage requested
+                        </MudChip>
+                    }
+
+                </MudStack>
+            </MudPaper>
+        }
+
+        @* Flag summary *@
+        @if (_flagged.Count + _deepCoverage.Count > 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">
+                @if (_flagged.Count > 0)
+                {
+                    <span>@_flagged.Count section(s) flagged for removal. </span>
+                }
+                @if (_deepCoverage.Count > 0)
+                {
+                    <span>@_deepCoverage.Count section(s) marked for deeper coverage on the next run.</span>
+                }
+            </MudAlert>
+        }
+
+        @* Actions *@
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.CheckCircle"
+                       FullWidth="true"
+                       OnClick="@Approve">
+                Approve &amp; Generate PDF
+            </MudButton>
+        </MudStack>
+
+    </MudStack>
+</MudPaper>
+
+@code {
+
+    [Parameter, EditorRequired] public BriefReviewData Data      { get; set; } = default!;
+    [Parameter, EditorRequired] public string          RunId     { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public EventCallback   OnApprove { get; set; }
+
+    private readonly HashSet<int> _flagged      = new();
+    private readonly HashSet<int> _deepCoverage = new();
+
+    private void ToggleFlag(int idx)
+    {
+        if (!_flagged.Add(idx)) _flagged.Remove(idx);
+    }
+
+    private void ToggleDeepCoverage(int idx)
+    {
+        if (!_deepCoverage.Add(idx)) _deepCoverage.Remove(idx);
+    }
+
+    private async Task Approve() => await OnApprove.InvokeAsync();
+}

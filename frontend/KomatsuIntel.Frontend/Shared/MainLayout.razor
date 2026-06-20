@@ -1,0 +1,95 @@
+@inherits LayoutComponentBase
+
+<MudLayout>
+
+    <MudAppBar Elevation="1" Dense="false">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="@ToggleDrawer" />
+
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="ml-1">
+            <img src="images/komatsu-logo.svg" alt="Komatsu" style="height:19px;display:block;" />
+            <span style="color:rgba(255,255,255,0.55);letter-spacing:0.04em;font-size:0.78rem;padding-top:2px;font-family:'Roboto',sans-serif;">
+                Market Intelligence
+            </span>
+        </MudStack>
+
+        <MudSpacer />
+
+        <MudTooltip Text="API health">
+            <MudIconButton Icon="@Icons.Material.Filled.MonitorHeart"
+                           Color="Color.Inherit" Size="Size.Small" />
+        </MudTooltip>
+        <MudTooltip Text="Settings">
+            <MudIconButton Icon="@Icons.Material.Filled.Settings"
+                           Color="Color.Inherit" Size="Size.Small"
+                           Href="/preferences" />
+        </MudTooltip>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen"
+               ClipMode="DrawerClipMode.Always"
+               Elevation="2"
+               Variant="@DrawerVariant.Mini"
+               MiniWidth="56px"
+               Width="220px">
+
+        <MudNavMenu>
+
+            <MudTooltip Text="Front Page" Placement="Placement.Right" Disabled="_drawerOpen">
+                <MudNavLink Href="/"
+                            Match="NavLinkMatch.All"
+                            Icon="@Icons.Material.Filled.Newspaper">
+                    Front Page
+                </MudNavLink>
+            </MudTooltip>
+
+            <MudTooltip Text="Agent" Placement="Placement.Right" Disabled="_drawerOpen">
+                <MudNavLink Href="/agent"
+                            Icon="@Icons.Material.Filled.SmartToy">
+                    Agent
+                </MudNavLink>
+            </MudTooltip>
+
+            <MudTooltip Text="Archive" Placement="Placement.Right" Disabled="_drawerOpen">
+                <MudNavLink Href="/archive"
+                            Icon="@Icons.Material.Filled.CollectionsBookmark">
+                    Archive
+                </MudNavLink>
+            </MudTooltip>
+
+            <MudTooltip Text="Dashboard" Placement="Placement.Right" Disabled="_drawerOpen">
+                <MudNavLink Href="/dashboard"
+                            Icon="@Icons.Material.Filled.Dashboard">
+                    Dashboard
+                </MudNavLink>
+            </MudTooltip>
+
+            <MudTooltip Text="Testing" Placement="Placement.Right" Disabled="_drawerOpen">
+                <MudNavLink Href="/testing"
+                            Icon="@Icons.Material.Filled.BugReport">
+                    Testing
+                </MudNavLink>
+            </MudTooltip>
+
+        </MudNavMenu>
+
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-4 px-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+
+</MudLayout>
+
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+@code {
+    private bool _drawerOpen = true;
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+}

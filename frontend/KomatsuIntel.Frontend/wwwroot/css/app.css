@@ -1,0 +1,533 @@
+:root {
+    --komatsu-blue: #140A9A;
+    --komatsu-blue-dark: #0D0670;
+    --komatsu-blue-light: #ECEAF7;
+    --komatsu-yellow: #FFB700;
+    --komatsu-surface: #F8F9FC;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+    font-family: 'Roboto', sans-serif;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+/* ── Splash screen ─────────────────────────────────────────── */
+.splash-screen {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background: var(--komatsu-blue);
+    color: white;
+}
+.splash-logo {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    margin-bottom: 0.4rem;
+}
+.splash-subtitle {
+    font-size: 0.875rem;
+    opacity: 0.65;
+    margin-bottom: 2rem;
+    letter-spacing: 0.06em;
+}
+.splash-loader {
+    width: 48px;
+    height: 3px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+.splash-loader::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -48px;
+    width: 48px;
+    height: 100%;
+    background: white;
+    animation: splash-slide 1.1s ease-in-out infinite;
+}
+@keyframes splash-slide {
+    from { transform: translateX(0); }
+    to   { transform: translateX(96px); }
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #aaa; }
+
+/* ── Blazor error UI ────────────────────────────────────────── */
+#blazor-error-ui {
+    background: #fef3c7;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0,0,0,.15);
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem;
+    position: fixed;
+    width: 100%;
+    z-index: 9999;
+}
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
+}
+
+/* ── Splash logo image ──────────────────────────────────────── */
+.splash-logo-img {
+    height: 26px;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+/* ── Newspaper front page ───────────────────────────────────── */
+.newspaper-wrapper {
+    padding: 0 2px;
+}
+
+/* Date bar */
+.newspaper-datebar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0 10px;
+    font-size: 0.76rem;
+    color: #6B7280;
+    font-family: 'Roboto', sans-serif;
+    letter-spacing: 0.02em;
+}
+.datebar-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.datebar-sep { opacity: 0.45; }
+.datebar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* Horizontal rules */
+.news-hr-thick {
+    height: 3px;
+    background: #111827;
+    border: none;
+    margin: 0;
+}
+.news-hr-thin {
+    height: 1px;
+    background: #111827;
+    border: none;
+    margin: 2px 0 0;
+}
+.news-hr {
+    height: 1px;
+    background: #E5E7EB;
+    border: none;
+    margin: 18px 0;
+}
+
+/* Section label */
+.news-section-label {
+    display: inline-block;
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.63rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--komatsu-blue);
+    border-bottom: 2px solid var(--komatsu-blue);
+    padding-bottom: 2px;
+    margin-bottom: 8px;
+}
+
+/* Executive Brief */
+.executive-brief-section {
+    padding: 14px 0 6px;
+}
+.executive-brief-text {
+    max-width: 860px;
+    font-size: 0.875rem !important;
+    line-height: 1.7 !important;
+}
+
+/* Top row: lead + feature columns */
+.newspaper-top-row {
+    display: grid;
+    grid-template-columns: 3fr 1px 2fr;
+    gap: 0;
+    padding: 4px 0;
+}
+.news-vr {
+    background: #E5E7EB;
+    width: 1px;
+}
+.newspaper-lead-col {
+    padding-right: 28px;
+}
+.newspaper-feature-col {
+    padding-left: 28px;
+}
+
+/* Story typography */
+.news-category {
+    display: block;
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--komatsu-blue);
+    margin-bottom: 5px;
+}
+.news-headline-lead {
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.14;
+    color: #111827;
+    margin: 0 0 10px;
+}
+.news-headline-feature {
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    font-size: 1.22rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #111827;
+    margin: 0 0 6px;
+}
+.news-headline-standard {
+    font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    font-size: 0.97rem;
+    font-weight: 700;
+    line-height: 1.3;
+    color: #111827;
+    margin: 0 0 6px;
+}
+.news-deck {
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.855rem;
+    color: #4B5563;
+    line-height: 1.55;
+    font-style: italic;
+    margin: 0 0 10px;
+}
+.news-body {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 0.84rem;
+    line-height: 1.72;
+    color: #374151;
+    margin: 0 0 6px;
+}
+.news-byline {
+    font-family: 'Roboto', sans-serif;
+    font-size: 0.66rem;
+    color: #9CA3AF;
+    margin-top: 10px;
+    letter-spacing: 0.03em;
+}
+
+/* Standard stories grid (4 columns) */
+.newspaper-standard-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    padding: 4px 0 20px;
+}
+.newspaper-standard-story {
+    padding: 0 22px;
+}
+.newspaper-standard-story:first-child {
+    padding-left: 0;
+}
+.newspaper-standard-story:last-child {
+    padding-right: 0;
+}
+.story-border-left {
+    border-left: 1px solid #E5E7EB;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 900px) {
+    .newspaper-top-row {
+        grid-template-columns: 1fr;
+    }
+    .news-vr { display: none; }
+    .newspaper-lead-col { padding-right: 0; }
+    .newspaper-feature-col { padding-left: 0; }
+    .newspaper-standard-grid { grid-template-columns: repeat(2, 1fr); }
+    .newspaper-standard-story:nth-child(2) { border-left: 1px solid #E5E7EB; }
+    .newspaper-standard-story:nth-child(3) { border-left: none; padding-left: 0; }
+}
+@media (max-width: 540px) {
+    .newspaper-standard-grid { grid-template-columns: 1fr; }
+    .story-border-left { border-left: none; padding-left: 0; }
+    .news-headline-lead { font-size: 1.5rem; }
+}
+
+/* ── Agent page layout ──────────────────────────────────────── */
+.agent-layout {
+    display: flex;
+    gap: 16px;
+    height: calc(100vh - 96px);
+}
+.chat-panel {
+    flex: 3;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+.gate-panel {
+    flex: 2;
+    overflow-y: auto;
+    min-width: 300px;
+    max-width: 480px;
+}
+.messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ── Chat bubbles ───────────────────────────────────────────── */
+.chat-row-user   { display: flex; justify-content: flex-end; }
+.chat-row-agent  { display: flex; justify-content: flex-start; }
+
+.chat-bubble-user {
+    background: var(--komatsu-blue);
+    color: white;
+    border-radius: 18px 18px 4px 18px;
+    padding: 10px 16px;
+    max-width: 78%;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+.chat-bubble-agent {
+    background: #F1F1F5;
+    color: #1a1a1a;
+    border-radius: 18px 18px 18px 4px;
+    padding: 10px 16px;
+    max-width: 78%;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+.chat-bubble-system {
+    background: #FFF8E7;
+    border: 1px solid #FFD54F;
+    color: #7a5800;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    align-self: center;
+    width: 100%;
+    text-align: center;
+}
+.chat-timestamp {
+    font-size: 0.7rem;
+    color: #aaa;
+    margin-top: 2px;
+    padding: 0 4px;
+}
+
+/* ── Stage progress ─────────────────────────────────────────── */
+.stage-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+}
+.stage-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.stage-dot-done    { background: #22C55E; }
+.stage-dot-active  { background: var(--komatsu-blue); }
+.stage-dot-pending { background: #D1D5DB; }
+
+/* ── Thought bubble ─────────────────────────────────────────── */
+.chat-bubble-thought {
+    background: #F5F3FF;
+    border: 1px solid #DDD6FE;
+    border-radius: 10px;
+    padding: 8px 12px;
+    max-width: 78%;
+    font-size: 0.8rem;
+}
+.chat-thought-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    color: #5B21B6;
+    font-weight: 600;
+    user-select: none;
+}
+.chat-thought-body {
+    margin-top: 6px;
+    font-style: italic;
+    color: #6D28D9;
+    line-height: 1.5;
+    font-size: 0.78rem;
+}
+
+/* ── Tool call bubble ────────────────────────────────────────── */
+.chat-bubble-tool-call {
+    background: #F9FAFB;
+    border: 1px solid #D1D5DB;
+    border-left: 3px solid #374151;
+    border-radius: 6px;
+    padding: 6px 10px;
+    max-width: 78%;
+    font-size: 0.78rem;
+}
+.tool-call-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+}
+.tool-call-name {
+    font-weight: 700;
+    color: #111827;
+    font-size: 0.8rem;
+}
+.tool-call-args {
+    font-family: 'Roboto Mono', 'Courier New', monospace;
+    font-size: 0.72rem;
+    color: #4B5563;
+    word-break: break-all;
+}
+
+/* ── Tool result bubble ──────────────────────────────────────── */
+.chat-bubble-tool-result {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 6px;
+    padding: 4px 10px;
+    max-width: 78%;
+    font-size: 0.76rem;
+    color: #166534;
+}
+
+/* ── Phase separator ─────────────────────────────────────────── */
+.chat-bubble-phase {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    color: #140A9A;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    align-self: stretch;
+}
+.phase-line  { flex: 1; height: 1px; background: #C7D2FE; }
+.phase-label { flex-shrink: 0; }
+
+.chat-activity {
+    color: #9CA3AF;
+    font-size: 0.78rem;
+    font-style: italic;
+    padding: 2px 16px;
+    margin: 1px 0;
+    text-align: left;
+}
+
+.clarification-card {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 8px;
+    padding: 12px 16px;
+    max-width: 420px;
+}
+
+/* ── Sources panel ───────────────────────────────────────────── */
+.sources-domain-header {
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #140A9A;
+    border-bottom: 1px solid #E5E7EB;
+    padding-bottom: 3px;
+    margin: 10px 0 4px;
+}
+.source-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 0;
+    border-bottom: 1px solid #F3F4F6;
+}
+.source-tool-chip {
+    display: inline-block;
+    font-size: 0.62rem;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 3px;
+}
+.chip-news      { background: #FEF9C3; color: #92400E; }
+.chip-web       { background: #DBEAFE; color: #1E40AF; }
+.chip-sec       { background: #FCE7F3; color: #9D174D; }
+.chip-commodity { background: #D1FAE5; color: #065F46; }
+.chip-default   { background: #F3F4F6; color: #374151; }
+
+/* ── Archive & Dashboard ────────────────────────────────────── */
+.report-card-query {
+    font-size: 0.875rem;
+    color: #374151;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ── Animated current-thought bubble ────────────────────────── */
+@keyframes thought-fade {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.current-thought-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: #F5F3FF;
+    border: 1px solid #DDD6FE;
+    border-radius: 12px;
+    padding: 8px 12px;
+    max-width: 80%;
+    animation: thought-fade 0.35s ease forwards;
+}
+
+/* ── Test harness ───────────────────────────────────────────── */
+.test-status-pass { color: #22C55E; font-weight: 600; }
+.test-status-fail { color: #EF4444; font-weight: 600; }
+.test-status-running { color: var(--komatsu-blue); font-weight: 600; }
+.test-status-pending { color: #9CA3AF; }

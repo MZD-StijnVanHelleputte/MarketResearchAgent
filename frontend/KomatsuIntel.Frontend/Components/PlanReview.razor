@@ -1,0 +1,359 @@
+@* Gate 1 — displays one consolidated, entity-resolved research plan for approval *@
+@using System.Text.Json
+
+<MudPaper Elevation="1" Class="pa-4">
+    <MudStack Spacing="3">
+
+        @* ── Header ─────────────────────────────────────────────── *@
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudAvatar Color="Color.Primary" Size="Size.Small"
+                       Style="font-size:0.75rem;font-weight:700;">
+                G1
+            </MudAvatar>
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.subtitle1" Style="font-weight:700;">
+                    Gate 1 — Research Plan
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Review the consolidated execution plan, then approve or request a replan.
+                </MudText>
+            </MudStack>
+        </MudStack>
+
+        @* ── Research findings ───────────────────────────────────── *@
+        @if (!string.IsNullOrWhiteSpace(Data.Plan.ResearchFindings))
+        {
+            <MudPaper Elevation="0"
+                      Style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px;">
+                <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                    <MudIcon Icon="@Icons.Material.Outlined.TravelExplore"
+                             Style="color:#1D4ED8;font-size:1.1rem;flex-shrink:0;margin-top:2px;" />
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.caption"
+                                 Style="font-weight:700;color:#1E3A8A;text-transform:uppercase;letter-spacing:0.05em;">
+                            Pre-planning research
+                        </MudText>
+                        <MudText Typo="Typo.body2" Style="color:#1E40AF;margin-top:2px;">
+                            @Data.Plan.ResearchFindings
+                        </MudText>
+                    </MudStack>
+                </MudStack>
+            </MudPaper>
+        }
+
+        @* ── Entity manifest ─────────────────────────────────────── *@
+        @if (_companies.Count > 0 || _tickers.Count > 0 || _commodities.Count > 0 || _regions.Count > 0)
+        {
+            <MudExpansionPanels Elevation="0">
+                <MudExpansionPanel IsExpanded="true"
+                                   Style="border:1px solid #E5E7EB;border-radius:8px;">
+                    <TitleContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Outlined.AccountTree"
+                                     Style="font-size:1rem;color:#374151;" />
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                Entity scope
+                            </MudText>
+                        </MudStack>
+                    </TitleContent>
+                    <ChildContent>
+                        <MudStack Spacing="2" Class="pa-1">
+
+                            @if (_companies.Count > 0)
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption"
+                                             Style="color:#6B7280;font-weight:600;display:block;margin-bottom:4px;">
+                                        COMPANIES
+                                    </MudText>
+                                    <MudChipSet T="string" ReadOnly="true">
+                                        @foreach (var c in _companies)
+                                        {
+                                            <MudChip T="string" Size="Size.Small"
+                                                     Color="Color.Primary"
+                                                     Variant="Variant.Outlined">
+                                                @c
+                                            </MudChip>
+                                        }
+                                    </MudChipSet>
+                                </div>
+                            }
+
+                            @if (_tickers.Count > 0)
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption"
+                                             Style="color:#6B7280;font-weight:600;display:block;margin-bottom:4px;">
+                                        TICKERS
+                                    </MudText>
+                                    <MudChipSet T="string" ReadOnly="true">
+                                        @foreach (var t in _tickers)
+                                        {
+                                            <MudChip T="string" Size="Size.Small"
+                                                     Color="Color.Secondary"
+                                                     Variant="Variant.Filled"
+                                                     Style="font-family:monospace;font-size:0.75rem;">
+                                                @t
+                                            </MudChip>
+                                        }
+                                    </MudChipSet>
+                                </div>
+                            }
+
+                            @if (_commodities.Count > 0)
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption"
+                                             Style="color:#6B7280;font-weight:600;display:block;margin-bottom:4px;">
+                                        COMMODITIES
+                                    </MudText>
+                                    <MudChipSet T="string" ReadOnly="true">
+                                        @foreach (var c in _commodities)
+                                        {
+                                            <MudChip T="string" Size="Size.Small"
+                                                     Color="Color.Warning"
+                                                     Variant="Variant.Outlined">
+                                                @c
+                                            </MudChip>
+                                        }
+                                    </MudChipSet>
+                                </div>
+                            }
+
+                            @if (_regions.Count > 0)
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption"
+                                             Style="color:#6B7280;font-weight:600;display:block;margin-bottom:4px;">
+                                        REGIONS / SITES
+                                    </MudText>
+                                    <MudChipSet T="string" ReadOnly="true">
+                                        @foreach (var r in _regions)
+                                        {
+                                            <MudChip T="string" Size="Size.Small"
+                                                     Color="Color.Info"
+                                                     Variant="Variant.Outlined">
+                                                @r
+                                            </MudChip>
+                                        }
+                                    </MudChipSet>
+                                </div>
+                            }
+
+                        </MudStack>
+                    </ChildContent>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        @* ── Active domains ──────────────────────────────────────── *@
+        @if (Data.Plan.DomainsActive.Count > 0)
+        {
+            <div>
+                <MudText Typo="Typo.caption"
+                         Style="color:#6B7280;font-weight:600;display:block;margin-bottom:6px;">
+                    ACTIVE DOMAINS
+                </MudText>
+                <MudChipSet T="string" ReadOnly="true">
+                    @foreach (var domain in Data.Plan.DomainsActive)
+                    {
+                        <MudChip T="string" Size="Size.Small"
+                                 Style="background:#140A9A;color:#fff;font-weight:600;">
+                            @domain.Replace("_", " ")
+                        </MudChip>
+                    }
+                </MudChipSet>
+            </div>
+        }
+
+        @* ── Planned tool calls (collapsible) ────────────────────── *@
+        @if (Data.Plan.PlannedToolCalls.Count > 0)
+        {
+            <MudExpansionPanels Elevation="0">
+                <MudExpansionPanel Style="border:1px solid #E5E7EB;border-radius:8px;">
+                    <TitleContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Outlined.Build"
+                                     Style="font-size:1rem;color:#374151;" />
+                            <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                Planned tool calls
+                            </MudText>
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default"
+                                     Style="height:18px;font-size:0.7rem;">
+                                @Data.Plan.PlannedToolCalls.Count
+                            </MudChip>
+                        </MudStack>
+                    </TitleContent>
+                    <ChildContent>
+                        <div style="font-size:0.78rem;overflow-x:auto;">
+                            <table style="width:100%;border-collapse:collapse;">
+                                <thead>
+                                    <tr style="background:#F9FAFB;">
+                                        <th style="padding:6px 8px;text-align:left;color:#6B7280;
+                                                   font-weight:600;border-bottom:1px solid #E5E7EB;">
+                                            Tool
+                                        </th>
+                                        <th style="padding:6px 8px;text-align:left;color:#6B7280;
+                                                   font-weight:600;border-bottom:1px solid #E5E7EB;">
+                                            Domain
+                                        </th>
+                                        <th style="padding:6px 8px;text-align:left;color:#6B7280;
+                                                   font-weight:600;border-bottom:1px solid #E5E7EB;">
+                                            Key parameters
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var tc in Data.Plan.PlannedToolCalls)
+                                    {
+                                        <tr style="border-bottom:1px solid #F3F4F6;">
+                                            <td style="padding:5px 8px;font-family:monospace;
+                                                       color:#140A9A;white-space:nowrap;">
+                                                @tc.Tool
+                                            </td>
+                                            <td style="padding:5px 8px;color:#374151;">
+                                                @tc.Domain.Replace("_", " ")
+                                            </td>
+                                            <td style="padding:5px 8px;color:#6B7280;
+                                                       font-family:monospace;font-size:0.73rem;">
+                                                @SummariseParams(tc.Params)
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </ChildContent>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        @* ── Rationale ───────────────────────────────────────────── *@
+        @if (!string.IsNullOrWhiteSpace(Data.Plan.Rationale))
+        {
+            <MudText Typo="Typo.body2" Style="color:#374151;">
+                @Data.Plan.Rationale
+            </MudText>
+        }
+
+        @* ── Quality scores ──────────────────────────────────────── *@
+        <MudStack Spacing="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center"
+                      Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Feasibility (60%)
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @Data.Plan.FeasibilityScore.ToString("P0")
+                </MudText>
+            </MudStack>
+            <MudProgressLinear Value="@((int)(Data.Plan.FeasibilityScore * 100))"
+                               Color="Color.Primary" Rounded="true" Size="Size.Small" />
+            <MudStack Row="true" AlignItems="AlignItems.Center"
+                      Justify="Justify.SpaceBetween" Class="mt-1">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Quality (40%)
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @Data.Plan.QualityScore.ToString("P0")
+                </MudText>
+            </MudStack>
+            <MudProgressLinear Value="@((int)(Data.Plan.QualityScore * 100))"
+                               Color="Color.Secondary" Rounded="true" Size="Size.Small" />
+        </MudStack>
+
+        @* Source plans *@
+        @if (Data.Plan.SourcePlanIds.Count > 0)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                Merged from: @string.Join(", ", Data.Plan.SourcePlanIds)
+            </MudText>
+        }
+
+        @* ── Gap report ──────────────────────────────────────────── *@
+        @if (!string.IsNullOrWhiteSpace(Data.Plan.GapReport))
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true"
+                      Icon="@Icons.Material.Outlined.Warning"
+                      Style="font-size:0.78rem;">
+                <strong>Gap:</strong> @Data.Plan.GapReport
+            </MudAlert>
+        }
+
+        @* ── Actions ─────────────────────────────────────────────── *@
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.CheckCircle"
+                       FullWidth="true"
+                       OnClick="@Approve">
+                Approve plan
+            </MudButton>
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.Replay"
+                       OnClick="@Redirect">
+                Replan
+            </MudButton>
+        </MudStack>
+
+    </MudStack>
+</MudPaper>
+
+@code {
+
+    [Parameter, EditorRequired] public ConsolidatedPlanData Data       { get; set; } = default!;
+    [Parameter, EditorRequired] public EventCallback        OnApprove  { get; set; }
+    [Parameter, EditorRequired] public EventCallback        OnRedirect { get; set; }
+
+    private List<string> _companies   = new();
+    private List<string> _tickers     = new();
+    private List<string> _commodities = new();
+    private List<string> _regions     = new();
+
+    protected override void OnParametersSet()
+    {
+        _companies   = ExtractStrings(Data.Plan.EntityManifest, "companies");
+        _tickers     = ExtractStrings(Data.Plan.EntityManifest, "tickers");
+        _commodities = ExtractStrings(Data.Plan.EntityManifest, "commodities");
+        _regions     = ExtractStrings(Data.Plan.EntityManifest, "mine_sites")
+                        .Concat(ExtractStrings(Data.Plan.EntityManifest, "regions"))
+                        .Distinct()
+                        .ToList();
+    }
+
+    private static List<string> ExtractStrings(JsonElement manifest, string key)
+    {
+        try
+        {
+            if (manifest.TryGetProperty(key, out var arr) &&
+                arr.ValueKind == JsonValueKind.Array)
+            {
+                return arr.EnumerateArray()
+                          .Select(e => e.GetString() ?? "")
+                          .Where(s => !string.IsNullOrWhiteSpace(s))
+                          .ToList();
+            }
+        }
+        catch { /* malformed manifest — ignore */ }
+        return new List<string>();
+    }
+
+    private static string SummariseParams(JsonElement p)
+    {
+        if (p.ValueKind != JsonValueKind.Object) return p.ToString();
+        var parts = p.EnumerateObject()
+                     .Take(3)
+                     .Select(prop => $"{prop.Name}={TruncateValue(prop.Value)}");
+        return string.Join(", ", parts);
+    }
+
+    private static string TruncateValue(JsonElement v)
+    {
+        var s = v.ToString();
+        return s.Length > 30 ? s[..27] + "…" : s;
+    }
+
+    private async Task Approve()  => await OnApprove.InvokeAsync();
+    private async Task Redirect() => await OnRedirect.InvokeAsync();
+}

@@ -1,0 +1,240 @@
+@page "/gates/{RunId}"
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Gate Review — Komatsu</PageTitle>
+
+<MudStack Spacing="4">
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                       Color="Color.Default"
+                       Href="/agent" />
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">
+                Gate Review
+            </MudText>
+            <MudText Typo="Typo.caption" Color="Color.Secondary"
+                     Style="font-family:monospace;">
+                Run @RunId
+            </MudText>
+        </div>
+    </MudStack>
+
+    @* Stage breadcrumb *@
+    <MudBreadcrumbs Items="@_breadcrumbs" Separator=">">
+        <ItemTemplate Context="item">
+            <MudText Typo="Typo.body2"
+                     Style="@(item.Disabled ? "color:#9CA3AF;" : "color:#140A9A;font-weight:600;")">
+                @item.Text
+            </MudText>
+        </ItemTemplate>
+    </MudBreadcrumbs>
+
+    @* Active gate panel *@
+    @if (CurrentGate == 1 && _consolidatedPlan is not null)
+    {
+        <PlanReview Data="@_consolidatedPlan"
+                    OnApprove="@ApproveGate1"
+                    OnRedirect="@GoBack" />
+    }
+    else if (CurrentGate == 2 && _gatheredData is not null)
+    {
+        <GatheredData Data="@_gatheredData"
+                      OnApprove="@ApproveGate2"
+                      OnRedirect="@((d) => RedirectGate2(d))" />
+    }
+    else if (CurrentGate == 3 && _briefReview is not null)
+    {
+        <BriefReview Data="@_briefReview"
+                     RunId="@RunId"
+                     OnApprove="@ApproveGate3" />
+    }
+    else if (_complete)
+    {
+        <MudPaper Elevation="1" Class="pa-6">
+            <MudStack AlignItems="AlignItems.Center" Spacing="3">
+                <MudIcon Icon="@Icons.Material.Filled.CheckCircle"
+                         Color="Color.Success" Style="font-size:3.5rem;" />
+                <MudText Typo="Typo.h5" Style="font-weight:700;">Brief Ready</MudText>
+                @if (_downloading)
+                {
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.PictureAsPdf"
+                               OnClick="@DownloadPdf" Size="Size.Large">
+                        Download PDF
+                    </MudButton>
+                }
+                @if (_downloadError is not null)
+                {
+                    <MudAlert Severity="Severity.Error">@_downloadError</MudAlert>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info">Loading gate data for run @RunId…</MudAlert>
+    }
+
+</MudStack>
+
+@code {
+
+    [Parameter] public string RunId { get; set; } = string.Empty;
+
+    private int CurrentGate = 1;
+    private bool _complete;
+    private bool _downloading;
+    private string? _downloadError;
+
+    private ConsolidatedPlanData?  _consolidatedPlan;
+    private GatheredDataView? _gatheredData;
+    private BriefReviewData?       _briefReview;
+
+    private List<BreadcrumbItem> _breadcrumbs = [];
+
+    protected override void OnParametersSet()
+    {
+        // Demo consolidated plan for standalone gate review page
+        var manifest = System.Text.Json.JsonSerializer.SerializeToElement(new
+        {
+            companies  = new[] { "Caterpillar Inc. (CAT)", "Volvo CE (VOLV-B.ST)", "Epiroc (EPI-A.ST)" },
+            tickers    = new[] { "CAT", "VOLV-B.ST", "EPI-A.ST" },
+            commodities = new[] { "Copper (HG=F)", "Gold (GC=F)" },
+            mine_sites = new[] { "Pilbara Region, WA", "Atacama Desert, Chile" },
+            regions    = new[] { "North America", "Europe", "Latin America" },
+        });
+        _consolidatedPlan = new ConsolidatedPlanData(RunId,
+            new ConsolidatedPlan(
+                PlanId:           "consolidated-demo",
+                SourcePlanIds:    ["plan-a", "plan-b", "plan-c"],
+                DomainsActive:    ["competition", "commodities", "mining_projects"],
+                EntityManifest:   manifest,
+                PlannedToolCalls: [
+                    new("get_company_financials",
+                        System.Text.Json.JsonSerializer.SerializeToElement(new { ticker = "CAT", period = "quarterly" }),
+                        "competition", "Caterpillar quarterly revenue benchmarking"),
+                    new("get_mining_metals_prices",
+                        System.Text.Json.JsonSerializer.SerializeToElement(new { metals = new[]{"gold","copper"} }),
+                        "commodities", "Gold and copper price cycle"),
+                ],
+                ResearchFindings:  "Identified 3 primary competitors: Caterpillar (CAT), Volvo CE (VOLV-B.ST), Epiroc (EPI-A.ST). Copper LME above $4.80/lb.",
+                Rationale:         "Broad competitive and commodity analysis combining financial benchmarking with commodity cycle indicators.",
+                GapReport:         "Epiroc SEC filings unavailable; NewsAPI substituted.",
+                FeasibilityScore:  0.86,
+                QualityScore:      0.83));
+        UpdateBreadcrumbs();
+    }
+
+    private void UpdateBreadcrumbs()
+    {
+        _breadcrumbs =
+        [
+            new("Understand",  "#", CurrentGate > 1),
+            new("Gate 1",      "#", CurrentGate != 1),
+            new("Collect",     "#", CurrentGate > 2),
+            new("Gate 2",      "#", CurrentGate != 2),
+            new("Synthesize",  "#", CurrentGate > 3),
+            new("Gate 3",      "#", CurrentGate != 3),
+        ];
+    }
+
+    private void GoBack() => Nav.NavigateTo("/agent");
+
+    private async Task ApproveGate1()
+    {
+        await Api.ApproveGateAsync(RunId, 1, new { });
+        CurrentGate = 2;
+        _gatheredData = new GatheredDataView(RunId,
+        [
+            new("commodities",
+                [
+                    new DomainDataset("get_mining_metals_prices", "copper — 4 point(s)", "table",
+                        ["date", "value (USD/lb)"],
+                        [["2026-03", "4.71"], ["2026-04", "4.78"], ["2026-05", "4.80"], ["2026-06", "4.82"]],
+                        4, null, null),
+                ],
+                []),
+            new("competition",
+                [
+                    new DomainDataset("news_search", "3 article(s)", "list", null, null, 3, null,
+                        [
+                            new DatasetItem("Caterpillar Q3 revenue tops estimates", "https://example.com/cat", "Revenue $16.8B (+4% YoY)."),
+                            new DatasetItem("Volvo CE launches EC950F", "https://example.com/volvo", "New 90-tonne excavator."),
+                        ]),
+                ],
+                ["competition/search_sec_filings: HTTP 429 rate limited"]),
+        ]);
+        UpdateBreadcrumbs();
+    }
+
+    private async Task ApproveGate2()
+    {
+        await Api.ApproveGateAsync(RunId, 2, new { });
+        CurrentGate = 3;
+        _briefReview = new BriefReviewData(RunId,
+        [
+            new("Competition",   "Caterpillar Q3 revenue $16.8B (+4% YoY). Volvo CE EC950F launched."),
+            new("Mining Projects", "Kamoa-Kakula Phase 3 approved — $1.1B equipment budget."),
+            new("Commodities",   "Copper LME $4.82/lb. CODELCO output cut driving tightness."),
+        ],
+        "Competitive intensity is elevated heading into Q4. Copper's rally supports major " +
+        "mining project investment cases. BHP's anticipated Q1 haul-truck tender is the " +
+        "largest near-term opportunity.");
+        UpdateBreadcrumbs();
+    }
+
+    private async Task RedirectGate2(string domain)
+    {
+        await Api.RedirectGateAsync(RunId, 2, new { domain });
+    }
+
+    private async Task ApproveGate3()
+    {
+        await Api.ApproveGateAsync(RunId, 3, new { });
+        _complete = true;
+        UpdateBreadcrumbs();
+    }
+
+    private async Task DownloadPdf()
+    {
+        _downloading = true;
+        _downloadError = null;
+        try
+        {
+            var bytes = await Api.DownloadReportAsync(RunId);
+            if (bytes is { Length: > 0 })
+            {
+                var b64 = Convert.ToBase64String(bytes);
+                await JS.InvokeVoidAsync("downloadFile",
+                    $"komatsu-brief-{RunId}.pdf", "application/pdf", b64);
+            }
+            else
+            {
+                _downloadError = "Report not available yet. The backend may still be generating it.";
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _downloadError = "PDF not yet generated — the backend encountered an error during report generation.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            _downloadError = "Report not ready: the run has not completed yet.";
+        }
+        catch
+        {
+            _downloadError = "Failed to reach the backend. Please ensure it is running and try again.";
+        }
+        finally
+        {
+            _downloading = false;
+        }
+    }
+}

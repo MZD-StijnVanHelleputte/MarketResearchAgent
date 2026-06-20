@@ -1,0 +1,59 @@
+import asyncio
+from dataclasses import dataclass
+
+from clients.fred_client import FredClient
+from clients.base_http_client import ClientError
+
+
+class ServiceError(Exception):
+    pass
+
+
+@dataclass
+class MacroObservation:
+    date: str
+    value: float | None  # None when FRED returns "." (data not available)
+
+
+@dataclass
+class MacroIndicator:
+    series_id: str
+    title: str
+    units: str
+    frequency: str
+    observations: list[MacroObservation]
+
+
+class MacroService:
+    """Business logic wrapper over FredClient."""
+
+    def __init__(self, client: FredClient | None = None) -> None:
+        self._client = client or FredClient()
+
+    async def get_indicator(self, series_id: str, limit: int = 10) -> MacroIndicator:
+        try:
+            obs_raw, info_raw = await asyncio.gather(
+                self._client.get_observations(series_id, limit),
+                self._client.get_series_info(series_id),
+            )
+        except ClientError as exc:
+            raise ServiceError(f"FRED request failed for '{series_id}': {exc}") from exc
+
+        series_list = info_raw.get("seriess", [{}])
+        meta = series_list[0] if series_list else {}
+
+        observations = [
+            MacroObservation(
+                date=o["date"],
+                value=float(o["value"]) if o.get("value") not in (".", None, "") else None,
+            )
+            for o in obs_raw.get("observations", [])
+        ]
+
+        return MacroIndicator(
+            series_id=series_id,
+            title=meta.get("title", series_id),
+            units=meta.get("units", ""),
+            frequency=meta.get("frequency_short", ""),
+            observations=observations,
+        )

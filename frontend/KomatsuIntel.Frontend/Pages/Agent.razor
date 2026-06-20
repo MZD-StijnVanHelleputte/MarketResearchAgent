@@ -1,0 +1,882 @@
+@page "/agent"
+@inject ApiClient Api
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+@using System.Text
+@using System.Text.Json
+
+<PageTitle>Agent — Komatsu Market Intelligence</PageTitle>
+
+<div class="agent-layout">
+
+    @* ── Left: Chat panel ──────────────────────────────────────── *@
+    <MudPaper Elevation="1" Class="chat-panel pa-0" Style="border-radius:8px;overflow:hidden;">
+
+        @* Stage progress bar *@
+        <MudPaper Elevation="0" Class="pa-3"
+                  Style="border-bottom:1px solid #E5E7EB;background:#F8F9FC;">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                @foreach (var (stage, i) in _stages.Select((s, i) => (s, i)))
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Style="flex:1;">
+                        @if (i > 0)
+                        {
+                            <div style="flex:1;height:2px;background:@(_currentStage > i - 1 ? "#140A9A" : "#E5E7EB");
+                                        transition:background 0.4s;margin:0 4px;"></div>
+                        }
+                        <div class="stage-dot @(StageClass(i))"></div>
+                        <MudText Typo="Typo.caption"
+                                 Style="@(_currentStage == i ? "font-weight:700;color:#140A9A;" : "color:#9CA3AF;")">
+                            @stage
+                        </MudText>
+                    </MudStack>
+                }
+            </MudStack>
+        </MudPaper>
+
+        @* Messages *@
+        <div id="messages-container" class="messages-container">
+            @if (_messages.Count == 0)
+            {
+                <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
+                            align-items:center;color:#9CA3AF;gap:8px;padding:32px 0;">
+                    <MudIcon Icon="@Icons.Material.Outlined.SmartToy"
+                             Style="font-size:3rem;color:#D1D5DB;" />
+                    <MudText Typo="Typo.body1" Style="color:#9CA3AF;">
+                        Ask anything about Komatsu's competitive landscape.
+                    </MudText>
+                    <MudText Typo="Typo.caption" Style="color:#C4C4C4;text-align:center;max-width:340px;">
+                        Try: "What is Caterpillar doing in large mining equipment?" or
+                        "Summarise copper demand trends for the next quarter."
+                    </MudText>
+                </div>
+            }
+            @foreach (var (m, idx) in _messages.Select((m, i) => (m, i)))
+            {
+                @if (m.Role == "system")
+                {
+                    <div class="chat-bubble-system">@m.Content</div>
+                }
+                else if (m.Role == "user")
+                {
+                    <div class="chat-row-user">
+                        <div>
+                            <div class="chat-bubble-user">@m.Content</div>
+                            <div class="chat-timestamp" style="text-align:right;">@m.Timestamp</div>
+                        </div>
+                    </div>
+                }
+                else if (m.Role == "thought")
+                {
+                    <div class="chat-row-agent">
+                        <div class="chat-bubble-thought">
+                            <div class="chat-thought-header" @onclick="@(() => ToggleThought(idx))">
+                                <MudIcon Icon="@Icons.Material.Outlined.Psychology"
+                                         Style="font-size:0.9rem;color:#7C3AED;flex-shrink:0;" />
+                                <span>Agent thought</span>
+                                <MudIcon Icon="@(_expandedThoughts.Contains(idx)
+                                                    ? Icons.Material.Filled.ExpandLess
+                                                    : Icons.Material.Filled.ExpandMore)"
+                                         Style="font-size:0.9rem;margin-left:auto;" />
+                            </div>
+                            @if (_expandedThoughts.Contains(idx))
+                            {
+                                <div class="chat-thought-body">@m.Content</div>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (m.Role == "tool_call")
+                {
+                    <div class="chat-row-agent">
+                        <div class="chat-bubble-tool-call">
+                            <div class="tool-call-header">
+                                <MudIcon Icon="@Icons.Material.Outlined.Build"
+                                         Style="font-size:0.85rem;color:#374151;flex-shrink:0;" />
+                                <span class="tool-call-name">@m.Meta</span>
+                            </div>
+                            <div class="tool-call-args">@m.Content</div>
+                        </div>
+                    </div>
+                }
+                else if (m.Role == "tool_result")
+                {
+                    <div class="chat-row-agent">
+                        <div class="chat-bubble-tool-result">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle"
+                                     Style="font-size:0.85rem;color:#16A34A;flex-shrink:0;" />
+                            <span><strong>@m.Meta</strong> → @m.Content</span>
+                        </div>
+                    </div>
+                }
+                else if (m.Role == "phase")
+                {
+                    <div class="chat-bubble-phase">
+                        <span class="phase-line"></span>
+                        <span class="phase-label">@m.Content</span>
+                        <span class="phase-line"></span>
+                    </div>
+                }
+                else if (m.Role == "clarification")
+                {
+                    <div class="chat-row-agent">
+                        <MudPaper Elevation="0" Class="clarification-card">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                    <MudIcon Icon="@Icons.Material.Outlined.Info"
+                                             Style="color:#140A9A;font-size:1rem;" />
+                                    <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                        A bit more context needed
+                                    </MudText>
+                                </MudStack>
+                                <MudText Typo="Typo.body2" Style="color:#374151;">
+                                    Before I start researching, I need to know which equipment
+                                    models, mine sites, and competitor tickers to focus on.
+                                </MudText>
+                                <MudText Typo="Typo.caption" Style="color:#6B7280;">@m.Content</MudText>
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           Href="/preferences"
+                                           Style="align-self:flex-start;margin-top:4px;">
+                                    Set Preferences
+                                </MudButton>
+                            </MudStack>
+                        </MudPaper>
+                    </div>
+                }
+                else if (m.Role == "activity")
+                {
+                    <div class="chat-activity">@m.Content</div>
+                }
+                else
+                {
+                    <div class="chat-row-agent">
+                        <div>
+                            <div class="chat-bubble-agent">@m.Content</div>
+                            <div class="chat-timestamp">@m.Timestamp</div>
+                        </div>
+                    </div>
+                }
+            }
+            @if (_loading && _currentThought is not null)
+            {
+                <div class="chat-row-agent" @key="_currentThought">
+                    <div class="current-thought-bubble">
+                        <MudIcon Icon="@Icons.Material.Outlined.Psychology"
+                                 Style="font-size:0.9rem;color:#7C3AED;flex-shrink:0;" />
+                        <span style="font-size:0.82rem;color:#4B5563;">@_currentThought</span>
+                    </div>
+                </div>
+            }
+            else if (_agentTyping)
+            {
+                <div class="chat-row-agent">
+                    <div class="chat-bubble-agent" style="padding:10px 14px;">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true"
+                                             Style="width:16px;height:16px;margin-right:6px;" />
+                        <span style="color:#9CA3AF;font-size:0.8rem;">Thinking…</span>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @* Input area *@
+        <MudPaper Elevation="0" Class="pa-3"
+                  Style="border-top:1px solid #E5E7EB;">
+            <MudStack Row="true" AlignItems="AlignItems.End" Spacing="2">
+                <MudTextField @bind-Value="_query"
+                              Placeholder="Ask a market intelligence question…"
+                              Variant="Variant.Outlined"
+                              Lines="2"
+                              AutoGrow="true"
+                              MaxLines="4"
+                              Immediate="true"
+                              Disabled="@(_loading || _awaitingGate is not null || _awaitingTimeoutConfirm)"
+                              Style="flex:1;"
+                              Adornment="Adornment.None"
+                              OnKeyDown="@HandleKeyDown" />
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           EndIcon="@Icons.Material.Filled.Send"
+                           OnClick="@Submit"
+                           Disabled="@(string.IsNullOrWhiteSpace(_query) || _loading || _awaitingGate is not null || _awaitingTimeoutConfirm)"
+                           Style="min-width:100px;height:56px;">
+                    Run
+                </MudButton>
+            </MudStack>
+            @if (_runId is not null)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                    Run ID: @_runId
+                </MudText>
+            }
+        </MudPaper>
+
+    </MudPaper>
+
+    @* ── Right: Gate / Sources panel ───────────────────────────── *@
+    <div class="gate-panel">
+
+        @if (_awaitingTimeoutConfirm)
+        {
+            <MudPaper Elevation="2" Class="pa-4 ma-2">
+                <MudAlert Severity="Severity.Warning" Class="mb-3">
+                    @_timeoutMessage
+                </MudAlert>
+                <MudStack Row="true" Spacing="2" Justify="Justify.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               OnClick="OnTimeoutContinue">Continue Research</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                               OnClick="OnTimeoutStop">Get Partial Report</MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+        else if (_awaitingGate == 1 && _consolidatedPlan is not null)
+        {
+            <PlanReview Data="@_consolidatedPlan"
+                        OnApprove="@ApproveGate1"
+                        OnRedirect="@RedirectGate1" />
+        }
+        else if (_awaitingGate == 2 && _gatheredData is not null)
+        {
+            <GatheredData Data="@_gatheredData"
+                          OnApprove="@ApproveGate2"
+                          OnRedirect="@RedirectGate2" />
+        }
+        else if (_awaitingGate == 3 && _briefReview is not null)
+        {
+            <BriefReview Data="@_briefReview"
+                         OnApprove="@ApproveGate3"
+                         RunId="@(_runId ?? string.Empty)" />
+        }
+        else
+        {
+            @* Sources panel — always visible when no gate is active *@
+            <MudPaper Elevation="1" Class="pa-3">
+
+                @* Header: title + count badge + download buttons *@
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle2" Style="font-weight:700;">Sources</MudText>
+                    @if (_sources.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary"
+                                 Style="height:20px;font-size:0.7rem;margin-left:4px;">
+                            @_sources.Count
+                        </MudChip>
+                    }
+                    <div style="flex:1;"></div>
+                    <MudTooltip Text="Download CSV">
+                        <MudIconButton Icon="@Icons.Material.Outlined.TableChart"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       Disabled="@(_sources.Count == 0)"
+                                       OnClick="@DownloadCsv" />
+                    </MudTooltip>
+                    <MudTooltip Text="Download Markdown">
+                        <MudIconButton Icon="@Icons.Material.Outlined.Article"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       Disabled="@(_sources.Count == 0)"
+                                       OnClick="@DownloadMarkdown" />
+                    </MudTooltip>
+                </MudStack>
+
+                @* Brief ready: completion state with PDF + Archive *@
+                @if (_runComplete)
+                {
+                    <MudStack Spacing="1" Class="mb-3">
+                        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-1">
+                            Brief ready
+                        </MudAlert>
+                        @if (_pdfWarning is not null)
+                        {
+                            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-1">
+                                @_pdfWarning
+                            </MudAlert>
+                        }
+                        @if (_pdfDownloadError is not null)
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-1">
+                                @_pdfDownloadError
+                            </MudAlert>
+                        }
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.PictureAsPdf"
+                                   OnClick="@DownloadPdf"
+                                   FullWidth="true"
+                                   Size="Size.Small"
+                                   Disabled="@(_pdfWarning is not null || _pdfDownloading)">
+                            @(_pdfDownloading ? "Downloading…" : "Download PDF")
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Archive"
+                                   Href="/archive"
+                                   FullWidth="true"
+                                   Size="Size.Small">
+                            View in Archive
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="@(_episodicSaved ? Color.Success : Color.Warning)"
+                                   StartIcon="@(_episodicSaved ? Icons.Material.Filled.Check : Icons.Material.Filled.Star)"
+                                   OnClick="@SaveToEpisodic"
+                                   Disabled="@(_episodicSaving || _episodicSaved)"
+                                   FullWidth="true"
+                                   Size="Size.Small">
+                            @(_episodicSaved ? "Saved to episodic memory"
+                              : _episodicSaving ? "Saving…"
+                              : "Save as high-quality research")
+                        </MudButton>
+                    </MudStack>
+                }
+
+                @* In-progress indicator *@
+                @if (_loading)
+                {
+                    <MudStack Spacing="1" Class="mb-2">
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary"
+                                           Rounded="true" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@_statusMessage</MudText>
+                    </MudStack>
+                }
+
+                <MudDivider Class="mb-2" />
+
+                @* Source list *@
+                @if (_sources.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary"
+                             Style="display:block;text-align:center;padding:24px 0;">
+                        Sources will appear here as the agent collects data.
+                    </MudText>
+                }
+                else
+                {
+                    @foreach (var group in _sources.GroupBy(s => s.Domain))
+                    {
+                        <div class="sources-domain-header">@group.Key</div>
+                        @foreach (var src in group)
+                        {
+                            <div class="source-item">
+                                <MudIcon Icon="@ToolIcon(src.Tool)"
+                                         Style="font-size:0.85rem;color:#6B7280;flex-shrink:0;margin-top:2px;" />
+                                <div style="flex:1;min-width:0;">
+                                    <div style="font-size:0.78rem;font-weight:500;color:#374151;
+                                                overflow:hidden;text-overflow:ellipsis;
+                                                display:-webkit-box;-webkit-line-clamp:2;
+                                                -webkit-box-orient:vertical;">
+                                        @if (src.Url is not null)
+                                        {
+                                            <a href="@src.Url" target="_blank"
+                                               style="color:#140A9A;text-decoration:none;">@src.Title</a>
+                                        }
+                                        else
+                                        {
+                                            @src.Title
+                                        }
+                                    </div>
+                                    <div style="font-size:0.7rem;color:#9CA3AF;margin-top:1px;">
+                                        <span class="source-tool-chip @ToolChipClass(src.Tool)">@src.Tool</span>
+                                        @src.Timestamp
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+
+            </MudPaper>
+        }
+
+    </div>
+
+</div>
+
+@code {
+
+    // ── State ──────────────────────────────────────────────────────────────
+
+    private string  _query        = string.Empty;
+    private string? _runId;
+    private string? _sessionId;
+    private bool    _loading;
+    private bool    _agentTyping;
+    private string  _statusMessage = string.Empty;
+
+    private int  _currentStage = 0;
+    private int? _awaitingGate;
+    private bool _awaitingTimeoutConfirm;
+    private string _timeoutMessage = string.Empty;
+    private bool _runComplete;
+    private bool _episodicSaving;
+    private bool _episodicSaved;
+
+    private ConsolidatedPlanData?  _consolidatedPlan;
+    private GatheredDataView? _gatheredData;
+    private BriefReviewData?       _briefReview;
+
+    private readonly List<ChatMessage> _messages         = new();
+    private readonly List<SourceItem>  _sources          = new();
+    private readonly HashSet<int>      _expandedThoughts = new();
+
+    private CancellationTokenSource? _pollCts;
+    private int     _seenActivityCount = 0;
+    private int     _seenSourcesCount  = 0;
+    private string? _currentThought;
+    private bool    _summaryShown;
+    private string? _pdfWarning;
+    private bool    _pdfDownloading;
+    private string? _pdfDownloadError;
+
+    private static readonly string[] _stages = ["Understand", "Collect", "Synthesize"];
+
+    private static readonly JsonSerializerOptions _json = new()
+    {
+        PropertyNamingPolicy        = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+    };
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    private string StageClass(int i) => _currentStage > i
+        ? "stage-dot-done"
+        : _currentStage == i ? "stage-dot-active" : "stage-dot-pending";
+
+    private void ToggleThought(int i)
+    {
+        if (!_expandedThoughts.Add(i))
+            _expandedThoughts.Remove(i);
+    }
+
+    private static string ToolIcon(string tool) => tool switch
+    {
+        "NewsAPI"          => Icons.Material.Outlined.Newspaper,
+        "WebSearch"        => Icons.Material.Outlined.TravelExplore,
+        "SEC EDGAR"        => Icons.Material.Outlined.AccountBalance,
+        "Commodities Feed" => Icons.Material.Outlined.ShowChart,
+        "brief_assembler"  => Icons.Material.Outlined.AutoAwesome,
+        _                  => Icons.Material.Outlined.Description,
+    };
+
+    private static string ToolChipClass(string tool) => tool switch
+    {
+        "NewsAPI"          => "chip-news",
+        "WebSearch"        => "chip-web",
+        "SEC EDGAR"        => "chip-sec",
+        "Commodities Feed" => "chip-commodity",
+        _                  => "chip-default",
+    };
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await Submit();
+    }
+
+    private void AddMessage(string role, string content, string? meta = null) =>
+        _messages.Add(new ChatMessage(role, content,
+            DateTime.Now.ToString("HH:mm"), meta));
+
+    private void AddSource(string domain, string tool, string title, string? url = null) =>
+        _sources.Add(new SourceItem(domain, tool, title, url,
+            DateTime.Now.ToString("HH:mm")));
+
+    private async Task ScrollToBottom()
+    {
+        await Task.Delay(50);
+        await JS.InvokeVoidAsync("scrollToBottom", "messages-container");
+    }
+
+    // ── Episodic memory ────────────────────────────────────────────────────
+
+    private async Task SaveToEpisodic()
+    {
+        if (_runId is null || _episodicSaved || _episodicSaving) return;
+        _episodicSaving = true;
+        StateHasChanged();
+        try
+        {
+            await Api.SaveToEpisodicAsync(_runId);
+            _episodicSaved = true;
+            Snackbar.Add("Saved to episodic memory — future runs can learn from this report.",
+                         Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not save to episodic memory: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _episodicSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Downloads ──────────────────────────────────────────────────────────
+
+    private async Task DownloadPdf()
+    {
+        _pdfDownloading   = true;
+        _pdfDownloadError = null;
+        try
+        {
+            var bytes = await Api.DownloadReportAsync(_runId!);
+            if (bytes is { Length: > 0 })
+            {
+                var b64 = Convert.ToBase64String(bytes);
+                await JS.InvokeVoidAsync("downloadFile",
+                    $"komatsu-brief-{_runId}.pdf", "application/pdf", b64);
+            }
+            else
+            {
+                _pdfDownloadError = "Report not available yet. The backend may still be generating it.";
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _pdfDownloadError = "PDF not yet generated — the backend encountered an error during report generation.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            _pdfDownloadError = "Report not ready: the run has not completed yet.";
+        }
+        catch
+        {
+            _pdfDownloadError = "Failed to reach the backend. Please ensure it is running and try again.";
+        }
+        finally
+        {
+            _pdfDownloading = false;
+        }
+    }
+
+    private async Task DownloadCsv()
+    {
+        var csv = "Domain,Tool,Title,URL,Timestamp\r\n"
+                + string.Join("\r\n", _sources.Select(s =>
+                    $"\"{s.Domain}\",\"{s.Tool}\",\"{s.Title.Replace("\"", "\"\"")}\",\"{s.Url ?? ""}\",\"{s.Timestamp}\""));
+        await JS.InvokeVoidAsync("downloadFile", "komatsu-sources.csv", "text/csv",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(csv)));
+    }
+
+    private async Task DownloadMarkdown()
+    {
+        var sb = new StringBuilder("# Komatsu Intelligence Sources\n\n");
+        foreach (var g in _sources.GroupBy(s => s.Domain))
+        {
+            sb.AppendLine($"## {g.Key}\n");
+            foreach (var s in g)
+                sb.AppendLine($"- **{s.Tool}** — [{s.Title}]({s.Url ?? "#"}) _{s.Timestamp}_");
+            sb.AppendLine();
+        }
+        await JS.InvokeVoidAsync("downloadFile", "komatsu-sources.md", "text/markdown",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString())));
+    }
+
+    // ── Submit ─────────────────────────────────────────────────────────────
+
+    private async Task Submit()
+    {
+        if (string.IsNullOrWhiteSpace(_query)) return;
+
+        _pollCts?.Cancel();
+        _pollCts = new CancellationTokenSource();
+
+        var q = _query.Trim();
+        _query        = string.Empty;
+        _loading            = true;
+        _agentTyping        = false;
+        _runComplete        = false;
+        _episodicSaving     = false;
+        _episodicSaved      = false;
+        _awaitingGate           = null;
+        _awaitingTimeoutConfirm = false;
+        _consolidatedPlan       = null;
+        _currentStage           = 0;
+        _seenActivityCount  = 0;
+        _messages.Clear();
+        _sources.Clear();
+        _expandedThoughts.Clear();
+
+        AddMessage("user", q);
+        await ScrollToBottom();
+
+        try
+        {
+            var response = await Api.StartChatAsync(new ChatRequest(q, _sessionId), _pollCts.Token);
+            if (response is null)
+            {
+                AddMessage("agent", "Failed to start run — no response from backend.");
+                _loading = false;
+                StateHasChanged();
+                return;
+            }
+            _runId         = response.RunId;
+            _sessionId     = response.SessionId;
+            _agentTyping   = true;
+            _statusMessage = "Run started — processing…";
+            StateHasChanged();
+            await ScrollToBottom();
+
+            await PollUntilComplete(_pollCts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            AddMessage("agent", $"Error communicating with backend: {ex.Message}");
+            _loading     = false;
+            _agentTyping = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Polling ─────────────────────────────────────────────────────────────
+
+    private async Task PollUntilComplete(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(2000, ct);
+            RunStatus? run;
+            try
+            {
+                run = await Api.GetRunAsync(_runId!, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { continue; /* transient — retry */ }
+
+            if (run is null) continue;
+
+            _statusMessage = run.StatusMessage ?? $"Stage: {run.Stage}…";
+            _currentStage = run.Stage switch
+            {
+                "understand" => 0,
+                "collect"    => 1,
+                "synthesize" => 2,
+                _            => _currentStage,
+            };
+
+            // Update animated thought from latest activity log entry
+            if (run.ActivityLog is { Count: > 0 })
+            {
+                _seenActivityCount = run.ActivityLog.Count;
+                _currentThought    = run.ActivityLog[^1];
+            }
+
+            // Hydrate sources incrementally (they become available at Gate 2)
+            if (run.Sources is not null && run.Sources.Count > _seenSourcesCount)
+            {
+                foreach (var src in run.Sources.Skip(_seenSourcesCount))
+                    AddSource(src.Domain, src.Tool, src.Title, src.Url);
+                _seenSourcesCount = run.Sources.Count;
+                await ScrollToBottom();
+            }
+
+            StateHasChanged();
+
+            if (run.Status == "waiting_clarification")
+            {
+                _agentTyping    = false;
+                _loading        = false;
+                _currentThought = null;
+                AddMessage("clarification", run.Error ?? "Missing entity preferences.");
+                await ScrollToBottom();
+                StateHasChanged();
+                return;
+            }
+
+            if (run.Status.StartsWith("waiting_gate_"))
+            {
+                _agentTyping    = false;
+                _loading        = false;
+                _currentThought = null;
+                int gate        = int.Parse(run.Status[^1..]);
+                _awaitingGate   = gate;
+
+                if (run.GateData.HasValue && gate == 1)
+                {
+                    var plan = run.GateData.Value.GetProperty("plan")
+                                    .Deserialize<ConsolidatedPlan>(_json);
+                    if (plan is not null)
+                        _consolidatedPlan = new ConsolidatedPlanData(_runId!, plan);
+                }
+                else if (run.GateData.HasValue && gate == 2)
+                {
+                    var domains = run.GateData.Value.GetProperty("domains")
+                                      .Deserialize<List<DomainData>>(_json);
+                    _gatheredData = new GatheredDataView(_runId!, domains ?? []);
+                }
+                else if (run.GateData.HasValue && gate == 3)
+                {
+                    var sections = run.GateData.Value.GetProperty("sections")
+                                       .Deserialize<List<BriefSection>>(_json);
+                    var execSummary = run.GateData.Value.GetProperty("executive_summary").GetString() ?? "";
+                    _briefReview = new BriefReviewData(_runId!, sections ?? [], execSummary);
+                    // Show executive summary in chat so user can evaluate before approving.
+                    // Fall back to first section preview if exec_summary is empty.
+                    if (!_summaryShown)
+                    {
+                        string? displayText = !string.IsNullOrWhiteSpace(execSummary)
+                            ? $"**Executive Summary**\n\n{execSummary}"
+                            : sections?.FirstOrDefault() is { } first
+                                ? $"**Brief Preview — {first.Title}**\n\n{first.Content}"
+                                : null;
+                        if (displayText is not null)
+                        {
+                            AddMessage("agent", displayText);
+                            _summaryShown = true;
+                            await ScrollToBottom();
+                        }
+                    }
+                }
+
+                _statusMessage = $"Gate {gate}: awaiting your review…";
+                StateHasChanged();
+                return;  // halt polling — gate handlers restart it
+            }
+
+            if (run.Status == "waiting_timeout_confirm")
+            {
+                _agentTyping             = false;
+                _loading                 = false;
+                _currentThought          = null;
+                _awaitingTimeoutConfirm  = true;
+                _timeoutMessage          = run.GateData.HasValue
+                    ? (run.GateData.Value.GetProperty("message").GetString() ?? "The agent has been running for a while.")
+                    : "The agent has been running for a while.";
+                _statusMessage           = "Agent paused — awaiting your decision…";
+                StateHasChanged();
+                return;  // halt polling — timeout confirm handlers restart it
+            }
+
+            if (run.Status == "done")
+            {
+                _agentTyping    = false;
+                _loading        = false;
+                _runComplete    = true;
+                _currentThought = null;
+                _currentStage   = 2;
+                _pdfWarning     = run.Warnings?.FirstOrDefault(w => w.StartsWith("PDF generation failed"));
+                // Show exec summary (or full brief as fallback) unless already shown at Gate 3
+                var summary = run.ExecSummary ?? run.Brief;
+                if (!_summaryShown && !string.IsNullOrWhiteSpace(summary))
+                    AddMessage("agent", summary);
+                await ScrollToBottom();
+                StateHasChanged();
+                return;
+            }
+
+            if (run.Status is "error" or "timeout")
+            {
+                _agentTyping    = false;
+                _loading        = false;
+                _currentThought = null;
+                var msg = run.Status == "timeout"
+                    ? $"Run timed out: {run.Error ?? "exceeded time limit"}"
+                    : $"Run failed: {run.Error ?? "unknown error"}";
+                AddMessage("agent", msg);
+                await ScrollToBottom();
+                StateHasChanged();
+                return;
+            }
+        }
+    }
+
+    // ── Gate actions ───────────────────────────────────────────────────────
+
+    private async Task ApproveGate1()
+    {
+        await Api.ApproveGateAsync(_runId!, 1, new { });
+        _awaitingGate     = null;
+        _consolidatedPlan = null;
+        _agentTyping      = true;
+        _loading          = true;
+        _currentThought   = null;
+        _statusMessage    = "Gate 1 approved — collecting data…";
+        StateHasChanged();
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task RedirectGate1()
+    {
+        await Api.RedirectGateAsync(_runId!, 1, new { });
+        _awaitingGate     = null;
+        _consolidatedPlan = null;
+        _agentTyping      = true;
+        _loading          = true;
+        _currentThought   = null;
+        _statusMessage    = "Replanning…";
+        StateHasChanged();
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task ApproveGate2()
+    {
+        await Api.ApproveGateAsync(_runId!, 2, new { });
+        _awaitingGate   = null;
+        _agentTyping    = true;
+        _loading        = true;
+        _currentThought = null;
+        _statusMessage  = "Gate 2 approved — synthesising…";
+        StateHasChanged();
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task RedirectGate2(string domain)
+    {
+        await Api.RedirectGateAsync(_runId!, 2, new { domain });
+        _awaitingGate      = null;
+        _gatheredData = null;
+        _agentTyping       = true;
+        _loading           = true;
+        _currentThought    = null;
+        _statusMessage     = "Re-collecting…";
+        StateHasChanged();
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task ApproveGate3()
+    {
+        await Api.ApproveGateAsync(_runId!, 3, new { });
+        _awaitingGate   = null;
+        _agentTyping    = true;
+        _loading        = true;
+        _currentThought = null;
+        _statusMessage  = "Gate 3 approved — finalising report…";
+        StateHasChanged();
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    // ── Timeout confirmation handlers ─────────────────────────────────────
+
+    private async Task OnTimeoutContinue()
+    {
+        _awaitingTimeoutConfirm = false;
+        _agentTyping            = true;
+        _loading                = true;
+        _currentThought         = null;
+        _statusMessage          = "Continuing research…";
+        StateHasChanged();
+        await Api.ContinueAfterTimeoutAsync(_runId!);
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task OnTimeoutStop()
+    {
+        _awaitingTimeoutConfirm = false;
+        _agentTyping            = true;
+        _loading                = true;
+        _currentThought         = null;
+        _statusMessage          = "Assembling partial report…";
+        StateHasChanged();
+        await Api.StopAfterTimeoutAsync(_runId!);
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    // ── Local models ───────────────────────────────────────────────────────
+
+    private record ChatMessage(string Role, string Content, string Timestamp, string? Meta = null);
+    private record SourceItem(string Domain, string Tool, string Title, string? Url, string Timestamp);
+}

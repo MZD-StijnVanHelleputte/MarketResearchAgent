@@ -1,0 +1,718 @@
+@page "/testing"
+@implements IDisposable
+@inject ApiClient Api
+@inject IJSRuntime JS
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+<PageTitle>Testing — Komatsu Market Intelligence</PageTitle>
+
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-4">
+
+    @* ═══════════════════════════════════════════════════════ TAB 1: Tests *@
+    <MudTabPanel Text="Tests" Icon="@Icons.Material.Outlined.Science">
+
+        <MudStack Spacing="4">
+
+            @* ── Header ─────────────────────────────────────────────────────── *@
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween"
+                      Class="flex-wrap gap-2">
+                <div>
+                    <MudText Typo="Typo.h5" Style="font-weight:700;">Testing</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Run curated test cases to verify end-to-end agent behaviour
+                    </MudText>
+                </div>
+                <MudStack Row="true" Spacing="2">
+                    <MudChip T="string" Icon="@Icons.Material.Filled.CheckCircle"
+                             Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">
+                        @PassCount pass
+                    </MudChip>
+                    <MudChip T="string" Icon="@Icons.Material.Filled.Cancel"
+                             Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">
+                        @FailCount fail
+                    </MudChip>
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Default"
+                               StartIcon="@Icons.Material.Filled.DeleteSweep"
+                               Disabled="@_runningAll"
+                               OnClick="@ClearResults">
+                        Clear
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.PlayArrow"
+                               Disabled="@_runningAll"
+                               OnClick="@RunAll">
+                        @(_runningAll ? "Running…" : "Run All")
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+
+            @* ── Filter bar ──────────────────────────────────────────────────── *@
+            <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                <MudChip T="string" OnClick="@(() => _categoryFilter = null)"
+                         Color="@(_categoryFilter is null ? Color.Primary : Color.Default)"
+                         Variant="@(_categoryFilter is null ? Variant.Filled : Variant.Outlined)"
+                         Size="Size.Small">
+                    All
+                </MudChip>
+                @foreach (var cat in _categories)
+                {
+                    <MudChip T="string" OnClick="@(() => _categoryFilter = cat)"
+                             Color="@(_categoryFilter == cat ? Color.Primary : Color.Default)"
+                             Variant="@(_categoryFilter == cat ? Variant.Filled : Variant.Outlined)"
+                             Size="Size.Small">
+                        @cat
+                    </MudChip>
+                }
+            </MudStack>
+
+            @* ── Empty state ─────────────────────────────────────────────────── *@
+            @if (!_testCases.Any())
+            {
+                <MudPaper Elevation="0" Class="pa-8"
+                          Style="display:flex;flex-direction:column;align-items:center;gap:12px;
+                                 text-align:center;border:1px dashed #E5E7EB;border-radius:8px;">
+                    <MudIcon Icon="@Icons.Material.Outlined.Science"
+                             Style="font-size:2.5rem;color:#D1D5DB;" />
+                    <MudText Typo="Typo.body1" Style="color:#6B7280;font-weight:600;">
+                        No test cases yet
+                    </MudText>
+                    <MudText Typo="Typo.body2" Style="color:#9CA3AF;max-width:440px;">
+                        Test cases are added incrementally as each backend phase is implemented.
+                        Once a tool or service has a working backend, its test will appear here.
+                    </MudText>
+                </MudPaper>
+            }
+
+            @* ── Test case table ─────────────────────────────────────────────── *@
+            @foreach (var tc in FilteredCases)
+            {
+                var result = _results.TryGetValue(tc.Id, out var r) ? r : null;
+
+                <MudExpansionPanel>
+                    <TitleContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center"
+                                  Justify="Justify.SpaceBetween" Style="width:100%;">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudIcon Icon="@StatusIcon(result)"
+                                         Style="@($"color:{StatusIconColor(result)};font-size:1.1rem;")" />
+                                <div>
+                                    <MudText Typo="Typo.body2" Style="font-weight:600;">@tc.Name</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@tc.Category</MudText>
+                                </div>
+                            </MudStack>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                @if (result is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        @result.RunAt?.ToString("HH:mm:ss")
+                                    </MudText>
+                                }
+                                <MudButton Variant="Variant.Outlined"
+                                           Color="Color.Primary"
+                                           Size="Size.Small"
+                                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                                           Disabled="@(result?.Status == TestStatus.Running)"
+                                           OnClick="@(() => RunTest(tc.Id))">
+                                    @(result?.Status == TestStatus.Running ? "Running…" : "Run")
+                                </MudButton>
+                            </MudStack>
+                        </MudStack>
+                    </TitleContent>
+                    <ChildContent>
+                        <MudStack Spacing="2" Class="pa-2">
+                            <MudText Typo="Typo.body2">@tc.Description</MudText>
+                            <MudText Typo="Typo.caption"
+                                     Style="font-weight:600;color:#6B7280;text-transform:uppercase;
+                                            letter-spacing:0.06em;">
+                                Expected behaviour
+                            </MudText>
+                            <MudText Typo="Typo.caption">@tc.ExpectedBehaviour</MudText>
+
+                            @if (result?.Output is not null)
+                            {
+                                <MudDivider />
+                                <MudText Typo="Typo.caption"
+                                         Style="font-weight:600;color:#6B7280;text-transform:uppercase;
+                                                letter-spacing:0.06em;">
+                                    Output
+                                </MudText>
+                                <MudPaper Elevation="0" Class="pa-2"
+                                          Style="background:#F8F9FA;border-radius:4px;
+                                                 font-family:monospace;font-size:0.78rem;
+                                                 white-space:pre-wrap;color:#374151;">
+                                    @result.Output
+                                </MudPaper>
+                            }
+                            else if (result?.Status == TestStatus.Running)
+                            {
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small"
+                                                         Style="width:18px;height:18px;" />
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        Running test…
+                                    </MudText>
+                                </MudStack>
+                            }
+                        </MudStack>
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+
+        </MudStack>
+
+    </MudTabPanel>
+
+    @* ═══════════════════════════════════════════════════════ TAB 2: Logs *@
+    <MudTabPanel Text="Logs" Icon="@Icons.Material.Outlined.Terminal" OnClick="@OnLogsTabActivated">
+
+        <MudStack Spacing="3">
+
+            @* ── Controls bar ────────────────────────────────────────────────── *@
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                <MudSelect T="string" Label="Run" Value="@_logRunId"
+                           ValueChanged="@OnLogRunChanged"
+                           Variant="Variant.Outlined" Dense="true"
+                           Style="min-width:280px;max-width:480px;">
+                    @foreach (var run in _logRuns)
+                    {
+                        <MudSelectItem Value="@run.RunId">
+                            @(run.Query is { Length: > 50 } q ? q[..50] + "…" : run.Query) — @run.StartedAt[..16]
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudTooltip Text="@(_logAutoRefresh ? "Stop auto-refresh" : "Auto-refresh every 2 s")">
+                    <MudToggleIconButton Toggled="_logAutoRefresh"
+                                        ToggledChanged="@OnAutoRefreshChanged"
+                                        Icon="@Icons.Material.Outlined.PlayCircle"
+                                        ToggledIcon="@Icons.Material.Outlined.PauseCircle"
+                                        Color="Color.Default"
+                                        ToggledColor="Color.Success"
+                                        Size="Size.Medium" />
+                </MudTooltip>
+
+                <MudButton Variant="Variant.Outlined" Size="Size.Small"
+                           StartIcon="@Icons.Material.Outlined.Refresh"
+                           Disabled="@string.IsNullOrEmpty(_logRunId)"
+                           OnClick="@RefreshLogs">
+                    Refresh
+                </MudButton>
+
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @(_logEvents.Count) events
+                </MudText>
+            </MudStack>
+
+            @* ── Empty state ─────────────────────────────────────────────────── *@
+            @if (string.IsNullOrEmpty(_logRunId))
+            {
+                <MudPaper Elevation="0" Class="pa-8"
+                          Style="display:flex;flex-direction:column;align-items:center;gap:12px;
+                                 text-align:center;border:1px dashed #E5E7EB;border-radius:8px;">
+                    <MudIcon Icon="@Icons.Material.Outlined.Terminal"
+                             Style="font-size:2.5rem;color:#D1D5DB;" />
+                    <MudText Typo="Typo.body1" Style="color:#6B7280;font-weight:600;">
+                        Select a run to view its event log
+                    </MudText>
+                </MudPaper>
+            }
+            else if (!_logEvents.Any())
+            {
+                <MudPaper Elevation="0" Class="pa-6"
+                          Style="text-align:center;border:1px dashed #E5E7EB;border-radius:8px;">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        No events recorded for this run yet. Start a query to see activity here.
+                    </MudText>
+                </MudPaper>
+            }
+            else
+            {
+                @* ── Event table ──────────────────────────────────────────────── *@
+                <MudSimpleTable Dense="true" Hover="true" FixedHeader="true"
+                                Style="font-size:0.8rem;max-height:70vh;overflow-y:auto;">
+                    <thead>
+                        <tr>
+                            <th style="width:90px;">Time</th>
+                            <th style="width:100px;">Stage</th>
+                            <th style="width:110px;">Domain</th>
+                            <th style="width:120px;">Event</th>
+                            <th>Label</th>
+                            <th style="width:60px;text-align:center;">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var ev in _logEvents)
+                        {
+                            <tr style="@RowStyle(ev)">
+                                <td style="font-family:monospace;white-space:nowrap;color:#6B7280;">
+                                    @FormatTime(ev.Ts)
+                                </td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                             Style="@($"font-size:0.7rem;height:20px;background:{StageColor(ev.Stage)};color:#fff;")">
+                                        @(string.IsNullOrEmpty(ev.Stage) ? "—" : ev.Stage)
+                                    </MudChip>
+                                </td>
+                                <td style="color:#374151;">
+                                    @(string.IsNullOrEmpty(ev.Domain) ? "" : ev.Domain)
+                                </td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Style="@($"font-size:0.7rem;height:20px;border-color:{EventColor(ev.EventType)};color:{EventColor(ev.EventType)};")">
+                                        @ev.EventType
+                                    </MudChip>
+                                </td>
+                                <td style="color:#111827;word-break:break-word;">
+                                    @ev.Label
+                                </td>
+                                <td style="text-align:center;">
+                                    @if (!string.IsNullOrEmpty(ev.Detail))
+                                    {
+                                        <MudIconButton Icon="@(_expandedIds.Contains(ev.Id) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                       Size="Size.Small"
+                                                       OnClick="@(() => ToggleDetail(ev.Id))" />
+                                    }
+                                </td>
+                            </tr>
+                            @if (_expandedIds.Contains(ev.Id) && !string.IsNullOrEmpty(ev.Detail))
+                            {
+                                <tr>
+                                    <td colspan="6" style="padding:0 8px 8px 8px;">
+                                        <MudPaper Elevation="0" Class="pa-2"
+                                                  Style="background:#F1F5F9;border-radius:4px;
+                                                         font-family:monospace;font-size:0.75rem;
+                                                         white-space:pre-wrap;color:#374151;word-break:break-all;">
+                                            @FormatDetail(ev.Detail)
+                                        </MudPaper>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+
+        </MudStack>
+
+    </MudTabPanel>
+
+</MudTabs>
+
+@code {
+
+    // ── Tests tab ──────────────────────────────────────────────────────────────
+
+    private string? _categoryFilter;
+    private bool    _runningAll;
+
+    private readonly Dictionary<string, TestResult> _results = new();
+
+    private static readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("localStorage.getItem", "kx-test-results");
+            if (!string.IsNullOrEmpty(json))
+            {
+                var saved = JsonSerializer.Deserialize<Dictionary<string, TestResult>>(json, _jsonOptions);
+                if (saved is not null)
+                    foreach (var kv in saved)
+                        _results[kv.Key] = kv.Value;
+            }
+        }
+        catch { /* corrupt cache — start fresh */ }
+
+        await LoadLogRunsAsync();
+    }
+
+    private async Task SaveResultsAsync()
+    {
+        var json = JsonSerializer.Serialize(_results, _jsonOptions);
+        await JS.InvokeVoidAsync("localStorage.setItem", "kx-test-results", json);
+    }
+
+    private async Task ClearResults()
+    {
+        _results.Clear();
+        await JS.InvokeVoidAsync("localStorage.removeItem", "kx-test-results");
+    }
+
+    private IEnumerable<TestCase> FilteredCases => _categoryFilter is null
+        ? _testCases
+        : _testCases.Where(t => t.Category == _categoryFilter);
+
+    private int PassCount => _results.Values.Count(r => r.Status == TestStatus.Pass);
+    private int FailCount => _results.Values.Count(r => r.Status == TestStatus.Fail);
+
+    private static readonly string[] _categories =
+        ["Tool Calling", "ReAct Loop", "Tree of Thought", "RAG Retrieval", "Gate Flow", "Safety"];
+
+    private static string  StatusIcon(TestResult? r) => r?.Status switch
+    {
+        TestStatus.Pass    => Icons.Material.Filled.CheckCircle,
+        TestStatus.Fail    => Icons.Material.Filled.Cancel,
+        TestStatus.Running => Icons.Material.Filled.HourglassTop,
+        _                  => Icons.Material.Outlined.RadioButtonUnchecked,
+    };
+
+    private static string StatusIconColor(TestResult? r) => r?.Status switch
+    {
+        TestStatus.Pass    => "#22C55E",
+        TestStatus.Fail    => "#EF4444",
+        TestStatus.Running => "#140A9A",
+        _                  => "#D1D5DB",
+    };
+
+    private static readonly Dictionary<string, string> _endpoints = new()
+    {
+        ["llm-react"]           = "tests/run/llm",
+        ["news-search"]         = "tests/run/news-search",
+        ["commodity-price"]     = "tests/run/mining-metals-prices",
+        ["commodity-history"]   = "tests/run/broad-commodity-cycle",
+        ["company-financials"]  = "tests/run/company-financials",
+        ["equity-price"]        = "tests/run/equity-price",
+        ["sec-filings"]         = "tests/run/sec-filings",
+        ["web-search"]          = "tests/run/web-search",
+        ["masterdata-lookup"]   = "tests/run/masterdata-lookup",
+        ["macro-indicator"]     = "tests/run/macro-indicator",
+        ["industry-knowledge"]  = "tests/run/industry-knowledge",
+        ["episodic-memory"]     = "tests/run/episodic-memory",
+        // FMP expanded tools
+        ["income-statement"]    = "tests/run/income-statement",
+        ["balance-sheet"]       = "tests/run/balance-sheet",
+        ["cash-flow"]           = "tests/run/cash-flow",
+        ["financial-ratios"]    = "tests/run/financial-ratios",
+        ["analyst-estimates"]   = "tests/run/analyst-estimates",
+        ["stock-peers"]         = "tests/run/stock-peers",
+        ["company-rating"]      = "tests/run/company-rating",
+        ["earnings-surprises"]  = "tests/run/earnings-surprises",
+        ["press-releases"]      = "tests/run/press-releases",
+        ["stock-screener"]      = "tests/run/stock-screener",
+    };
+
+    private async Task RunTest(string id)
+    {
+        _results[id] = new(id, TestStatus.Running, null, DateTime.Now);
+        StateHasChanged();
+
+        if (!_endpoints.TryGetValue(id, out var path))
+        {
+            _results[id] = new(id, TestStatus.Fail, "No backend endpoint configured for this test.", DateTime.Now);
+            await SaveResultsAsync();
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var result = await Api.RunTestAsync(path);
+            _results[id] = new(
+                id,
+                result?.Passed == true ? TestStatus.Pass : TestStatus.Fail,
+                result?.Output ?? "No output returned.",
+                DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            _results[id] = new(id, TestStatus.Fail, ex.Message, DateTime.Now);
+        }
+
+        await SaveResultsAsync();
+        StateHasChanged();
+    }
+
+    private async Task RunAll()
+    {
+        _runningAll = true;
+        foreach (var tc in _testCases)
+            await RunTest(tc.Id);
+        _runningAll = false;
+    }
+
+    // ── Logs tab ───────────────────────────────────────────────────────────────
+
+    private string           _logRunId      = "";
+    private List<StepEvent>  _logEvents     = [];
+    private List<RunMetric>  _logRuns       = [];
+    private bool             _logAutoRefresh;
+    private System.Threading.Timer? _logTimer;
+    private readonly HashSet<int>   _expandedIds = [];
+
+    private async Task LoadLogRunsAsync()
+    {
+        try
+        {
+            var dashboard = await Api.GetDashboardAsync();
+            if (dashboard is not null)
+                _logRuns = dashboard.RecentRuns;
+        }
+        catch { /* non-fatal */ }
+    }
+
+    private async Task OnLogsTabActivated()
+    {
+        await LoadLogRunsAsync();
+        StateHasChanged();
+    }
+
+    private async Task OnLogRunChanged(string runId)
+    {
+        _logRunId    = runId;
+        _expandedIds.Clear();
+        await RefreshLogs();
+        StartOrStopTimer();
+    }
+
+    private async Task RefreshLogs()
+    {
+        if (string.IsNullOrEmpty(_logRunId)) return;
+        try
+        {
+            _logEvents = await Api.GetRunLogsAsync(_logRunId);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* non-fatal */ }
+    }
+
+    private void StartOrStopTimer()
+    {
+        _logTimer?.Dispose();
+        if (_logAutoRefresh && !string.IsNullOrEmpty(_logRunId))
+        {
+            _logTimer = new System.Threading.Timer(
+                async _ => await RefreshLogs(),
+                null,
+                TimeSpan.FromSeconds(2),
+                TimeSpan.FromSeconds(2));
+        }
+    }
+
+    // Called when the toggle changes
+    protected void OnAutoRefreshChanged(bool value)
+    {
+        _logAutoRefresh = value;
+        StartOrStopTimer();
+    }
+
+    private void ToggleDetail(int id)
+    {
+        if (!_expandedIds.Add(id))
+            _expandedIds.Remove(id);
+    }
+
+    private static string FormatTime(string ts)
+    {
+        if (DateTime.TryParse(ts, out var dt))
+            return dt.ToLocalTime().ToString("HH:mm:ss");
+        return ts.Length >= 19 ? ts[11..19] : ts;
+    }
+
+    private static string FormatDetail(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return "";
+        try
+        {
+            var doc = JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return json; }
+    }
+
+    private static string StageColor(string stage) => stage switch
+    {
+        "understand" => "#140A9A",
+        "collect"    => "#16A34A",
+        "synthesize" => "#7C3AED",
+        _            => "#6B7280",
+    };
+
+    private static string EventColor(string eventType) => eventType switch
+    {
+        "tool_call"     => "#16A34A",
+        "tool_error"    => "#DC2626",
+        "llm_call"      => "#7C3AED",
+        "node_start"    => "#140A9A",
+        "domain_filter" => "#D97706",
+        _               => "#6B7280",
+    };
+
+    private static string RowStyle(StepEvent ev)
+    {
+        if (ev.Level == "error") return "background:#FEF2F2;";
+        if (ev.EventType == "domain_filter" && ev.Label.Contains(": 0/")) return "background:#FFFBEB;";
+        return "";
+    }
+
+    public void Dispose()
+    {
+        _logTimer?.Dispose();
+    }
+
+    // ── Test case definitions ──────────────────────────────────────────────────
+
+    private static readonly TestCase[] _testCases =
+    [
+        new(
+            "llm-react",
+            "LLM — ReAct Loop",
+            "ReAct Loop",
+            "Calls the configured LLM (Mistral mistral-medium-3-5) with a minimal prompt and verifies a non-empty response is returned.",
+            "LLM returns a non-empty content string or at least one tool call within the request timeout."
+        ),
+        new(
+            "news-search",
+            "NewsAPI — news_search Tool",
+            "Tool Calling",
+            "Invokes the news_search collect tool with a known Komatsu query and verifies articles are returned from the NewsAPI.",
+            "At least one article is returned with a non-empty title field."
+        ),
+        new(
+            "commodity-price",
+            "Alpha Vantage — get_commodity_price Tool",
+            "Tool Calling",
+            "Fetches the latest COPPER spot price via the Alpha Vantage API using the get_commodity_price tool.",
+            "A price greater than zero is returned with a trade date."
+        ),
+        new(
+            "commodity-history",
+            "yFinance — get_commodity_history Tool",
+            "Tool Calling",
+            "Fetches 1-month OHLCV history for COPPER via yFinance using the get_commodity_history tool.",
+            "At least one OHLCV row is returned for the requested period."
+        ),
+        new(
+            "company-financials",
+            "FMP — get_company_financials Tool",
+            "Tool Calling",
+            "Fetches the latest financial summary for Caterpillar (CAT) via Financial Modeling Prep using the get_company_financials tool.",
+            "Revenue and market cap are returned for ticker CAT."
+        ),
+        new(
+            "equity-price",
+            "yFinance — get_equity_price Tool",
+            "Tool Calling",
+            "Fetches the current market price and market cap for Caterpillar (CAT) via yFinance using the get_equity_price tool.",
+            "A price greater than zero is returned with currency and trade date."
+        ),
+        new(
+            "sec-filings",
+            "SEC EDGAR — search_sec_filings Tool",
+            "Tool Calling",
+            "Searches SEC EDGAR full-text search for 10-K/10-Q filings matching 'Komatsu construction equipment'.",
+            "At least one filing is returned with entity name, form type, and filing date."
+        ),
+        new(
+            "web-search",
+            "Tavily — web_search Tool",
+            "Tool Calling",
+            "Runs a web search for 'Komatsu excavator market 2024' via Tavily using the web_search tool.",
+            "At least one result is returned with a title and URL."
+        ),
+        new(
+            "masterdata-lookup",
+            "Masterdata — masterdata_lookup Tool",
+            "Tool Calling",
+            "Queries Komatsu's internal master-data registry for the 'competitors' entity type.",
+            "At least one competitor entry is returned from the local registry."
+        ),
+        new(
+            "macro-indicator",
+            "FRED — get_macro_indicator Tool",
+            "Tool Calling",
+            "Fetches the 5 most recent observations of the Industrial Production Index (INDPRO) from FRED.",
+            "At least one observation with a date and numeric value is returned."
+        ),
+        new(
+            "industry-knowledge",
+            "RAG — search_industry_knowledge",
+            "RAG Retrieval",
+            "Queries the ChromaDB industry knowledge base with 'mining equipment market trends'. The collection is seeded on startup from the industry knowledge documents.",
+            "The retriever responds without error. Chunks are returned if the collection has been seeded; an empty result is acceptable on a fresh instance."
+        ),
+        new(
+            "episodic-memory",
+            "RAG — search_episodic_memory",
+            "RAG Retrieval",
+            "Queries the ChromaDB episodic memory store with 'Komatsu market analysis'. This collection accumulates entries from completed agent runs.",
+            "The retriever responds without error. An empty result is expected on a fresh instance with no prior runs."
+        ),
+        new(
+            "income-statement",
+            "FMP — get_income_statement Tool",
+            "Tool Calling",
+            "Fetches 2 years of annual income statements for Caterpillar (CAT) via Financial Modeling Prep. Returns revenue, gross profit, operating income, net income, EBITDA, and EPS.",
+            "At least one period is returned with a non-null revenue value."
+        ),
+        new(
+            "balance-sheet",
+            "FMP — get_balance_sheet Tool",
+            "Tool Calling",
+            "Fetches 2 years of annual balance sheets for Caterpillar (CAT) via Financial Modeling Prep. Returns cash, total assets, total debt, total equity, and net debt.",
+            "At least one period is returned with a non-null total assets value."
+        ),
+        new(
+            "cash-flow",
+            "FMP — get_cash_flow Tool",
+            "Tool Calling",
+            "Fetches 2 years of annual cash flow statements for Caterpillar (CAT) via Financial Modeling Prep. Returns operating cash flow, capex, and free cash flow.",
+            "At least one period is returned with a non-null free cash flow value."
+        ),
+        new(
+            "financial-ratios",
+            "FMP — get_financial_ratios Tool",
+            "Tool Calling",
+            "Fetches 2 years of annual financial ratios for Caterpillar (CAT) via Financial Modeling Prep. Returns P/E, EV/EBITDA, debt-to-equity, ROE, and ROIC.",
+            "At least one period is returned with a non-null P/E ratio."
+        ),
+        new(
+            "analyst-estimates",
+            "FMP — get_analyst_estimates Tool",
+            "Tool Calling",
+            "Fetches analyst consensus estimates for Caterpillar (CAT) via Financial Modeling Prep. Returns forward revenue and EPS estimates with analyst count.",
+            "At least one estimate period is returned with a non-null average revenue estimate."
+        ),
+        new(
+            "stock-peers",
+            "FMP — get_stock_peers Tool",
+            "Tool Calling",
+            "Fetches the peer companies for Caterpillar (CAT) via Financial Modeling Prep. Returns a list of peer ticker symbols in the same sector and market cap range.",
+            "At least one peer ticker is returned."
+        ),
+        new(
+            "company-rating",
+            "FMP — get_company_rating Tool",
+            "Tool Calling",
+            "Fetches the DCF-based investment rating for Caterpillar (CAT) via Financial Modeling Prep. Returns a rating label (Strong Buy / Buy / Neutral / Sell / Strong Sell) and sub-scores.",
+            "A rating label and overall score are returned."
+        ),
+        new(
+            "earnings-surprises",
+            "FMP — get_earnings_surprises Tool",
+            "Tool Calling",
+            "Fetches the last 4 quarters of earnings surprises for Caterpillar (CAT) via Financial Modeling Prep. Returns actual EPS vs consensus estimate and surprise percentage.",
+            "At least one quarter is returned with actual and estimated EPS values."
+        ),
+        new(
+            "press-releases",
+            "FMP — get_press_releases Tool",
+            "Tool Calling",
+            "Fetches the 3 most recent official press releases for Caterpillar (CAT) via Financial Modeling Prep. Returns title, date, and content (up to 2000 chars each).",
+            "At least one press release is returned with a non-empty title."
+        ),
+        new(
+            "stock-screener",
+            "FMP — screen_stocks Tool",
+            "Tool Calling",
+            "Screens for US Industrials sector companies via the Financial Modeling Prep stock screener. Returns up to 5 matching companies with ticker, name, market cap, and exchange.",
+            "At least one company is returned with a ticker and market cap."
+        ),
+    ];
+}

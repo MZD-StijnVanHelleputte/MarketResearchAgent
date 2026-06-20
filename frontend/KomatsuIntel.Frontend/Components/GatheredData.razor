@@ -1,0 +1,224 @@
+@* Gate 2 — review the actual data gathered per domain; download or approve *@
+@inject IJSRuntime JS
+
+<MudPaper Elevation="1" Class="pa-4">
+    <MudStack Spacing="3">
+
+        @* Header *@
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <MudAvatar Color="Color.Primary" Size="Size.Small"
+                       Style="font-size:0.75rem;font-weight:700;">
+                G2
+            </MudAvatar>
+            <MudText Typo="Typo.subtitle1" Style="font-weight:700;">
+                Gate 2 — Data Collected
+            </MudText>
+        </MudStack>
+
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Review the data gathered for each domain below. Download a dataset to inspect
+            the full contents, re-run a domain if something is missing, or approve to synthesize.
+        </MudText>
+
+        @if (Data.Domains.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true">No data was collected.</MudAlert>
+        }
+
+        @foreach (var domain in Data.Domains)
+        {
+            <MudPaper Elevation="0" Class="pa-3"
+                      Style="border:1px solid #E5E7EB;border-radius:8px;">
+                <MudStack Spacing="2">
+
+                    @* Domain header + re-run *@
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                        <MudText Typo="Typo.body1" Style="font-weight:700;">@Pretty(domain.Domain)</MudText>
+                        <MudTooltip Text="@($"Re-run {Pretty(domain.Domain)} collection")">
+                            <MudIconButton Icon="@Icons.Material.Filled.Replay"
+                                           Color="Color.Warning" Size="Size.Small"
+                                           OnClick="@(() => OnRedirect.InvokeAsync(domain.Domain))" />
+                        </MudTooltip>
+                    </MudStack>
+
+                    @* Gap flags *@
+                    @if (domain.Errors is { Count: > 0 })
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true">
+                            <MudText Typo="Typo.caption" Style="font-weight:600;">
+                                @domain.Errors.Count data gap(s):
+                            </MudText>
+                            @foreach (var err in domain.Errors)
+                            {
+                                <MudText Typo="Typo.caption" Style="display:block;">• @err</MudText>
+                            }
+                        </MudAlert>
+                    }
+
+                    @if (domain.Datasets is null || domain.Datasets.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            No datasets returned for this domain.
+                        </MudText>
+                    }
+
+                    @foreach (var ds in domain.Datasets ?? [])
+                    {
+                        <MudPaper Elevation="0" Class="pa-2"
+                                  Style="background:#F8F9FC;border-radius:6px;">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                                    <MudStack Spacing="0">
+                                        <MudText Typo="Typo.body2" Style="font-weight:600;">@ds.Title</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                                 Style="font-family:monospace;">@ds.Tool</MudText>
+                                    </MudStack>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                               StartIcon="@Icons.Material.Filled.Download"
+                                               OnClick="@(() => Download(domain.Domain, ds))">
+                                        @(ds.Kind is "table" or "list" ? "CSV" : "JSON")
+                                    </MudButton>
+                                </MudStack>
+
+                                @if (ds.Kind == "table" && ds.Columns is { Count: > 0 })
+                                {
+                                    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Striped="true"
+                                                    Style="overflow-x:auto;">
+                                        <thead>
+                                            <tr>@foreach (var c in ds.Columns) { <th>@c</th> }</tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var row in (ds.Rows ?? []).Take(PreviewRows))
+                                            {
+                                                <tr>@foreach (var cell in row) { <td>@cell</td> }</tr>
+                                            }
+                                        </tbody>
+                                    </MudSimpleTable>
+                                    @if (ds.RowCount > PreviewRows)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            Showing @PreviewRows of @ds.RowCount rows — download for the full dataset.
+                                        </MudText>
+                                    }
+                                }
+                                else if (ds.Kind == "list" && ds.Items is { Count: > 0 })
+                                {
+                                    @foreach (var item in ds.Items.Take(PreviewRows))
+                                    {
+                                        <MudStack Spacing="0" Class="mb-1">
+                                            @if (!string.IsNullOrWhiteSpace(item.Url))
+                                            {
+                                                <MudLink Href="@item.Url" Target="_blank" Typo="Typo.body2">
+                                                    @(string.IsNullOrWhiteSpace(item.Title) ? item.Url : item.Title)
+                                                </MudLink>
+                                            }
+                                            else
+                                            {
+                                                <MudText Typo="Typo.body2">@item.Title</MudText>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(item.Snippet))
+                                            {
+                                                <MudText Typo="Typo.caption" Color="Color.Secondary">@item.Snippet</MudText>
+                                            }
+                                        </MudStack>
+                                    }
+                                    @if ((ds.Items?.Count ?? 0) > PreviewRows)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            Showing @PreviewRows of @ds.Items!.Count items — download for the full list.
+                                        </MudText>
+                                    }
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                             Style="font-family:monospace;white-space:pre-wrap;word-break:break-word;">
+                                        @(string.IsNullOrWhiteSpace(ds.Summary) ? "(no preview)" : ds.Summary)
+                                    </MudText>
+                                }
+                            </MudStack>
+                        </MudPaper>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+
+        @* Actions *@
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                   FullWidth="true"
+                   OnClick="@(() => OnApprove.InvokeAsync())">
+            Approve &amp; Synthesize
+        </MudButton>
+
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public GatheredDataView    Data       { get; set; } = default!;
+    [Parameter, EditorRequired] public EventCallback         OnApprove  { get; set; }
+    [Parameter, EditorRequired] public EventCallback<string> OnRedirect { get; set; }
+
+    private const int PreviewRows = 25;
+
+    private static string Pretty(string domain) =>
+        string.Join(' ', domain.Split('_').Select(w =>
+            w.Length == 0 ? w : char.ToUpper(w[0]) + w[1..]));
+
+    private async Task Download(string domain, DomainDataset ds)
+    {
+        string content;
+        string contentType;
+        string ext;
+        if (ds.Kind == "table" && ds.Columns is not null)
+        {
+            content = BuildCsv(ds.Columns, ds.Rows ?? []);
+            contentType = "text/csv";
+            ext = "csv";
+        }
+        else if (ds.Kind == "list" && ds.Items is not null)
+        {
+            var cols = new List<string> { "Title", "URL", "Snippet" };
+            var rows = ds.Items.Select(i => new List<string>
+                { i.Title ?? "", i.Url ?? "", i.Snippet ?? "" }).ToList();
+            content = BuildCsv(cols, rows);
+            contentType = "text/csv";
+            ext = "csv";
+        }
+        else
+        {
+            var payload = ds.Kind == "list"
+                ? (object?)ds.Items
+                : ds.Summary;
+            content = System.Text.Json.JsonSerializer.Serialize(
+                payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            contentType = "application/json";
+            ext = "json";
+        }
+
+        var fileName = $"{domain}_{Slug(ds.Tool)}.{ext}";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        await JS.InvokeVoidAsync("downloadFile", fileName, contentType, base64);
+    }
+
+    private static string BuildCsv(List<string> columns, List<List<string>> rows)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(string.Join(",", columns.Select(Escape)));
+        foreach (var row in rows)
+            sb.AppendLine(string.Join(",", row.Select(Escape)));
+        return sb.ToString();
+    }
+
+    private static string Escape(string field)
+    {
+        field ??= "";
+        if (field.Contains('"') || field.Contains(',') || field.Contains('\n'))
+            return "\"" + field.Replace("\"", "\"\"") + "\"";
+        return field;
+    }
+
+    private static string Slug(string s) =>
+        new string((s ?? "data").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+}

@@ -1,0 +1,38 @@
+Ticker,Name,Category,Type,AVFunction
+GC,Gold Futures,Precious Metals,Futures,GOLD_SILVER_HISTORY
+SI,Silver Futures,Precious Metals,Futures,GOLD_SILVER_HISTORY
+GLD,SPDR Gold Shares,Precious Metals,ETF,
+SLV,iShares Silver Trust,Precious Metals,ETF,
+GDX,VanEck Gold Miners ETF,Precious Metals,ETF,
+GDXJ,VanEck Junior Gold Miners ETF,Precious Metals,ETF,
+SLVP,iShares MSCI Global Silver Miners ETF,Precious Metals,ETF,
+HG,Copper Futures (COMEX),Base Metals,Futures,COPPER
+AL,Aluminum Futures (LME),Base Metals,Futures,ALUMINUM
+COPX,Global X Copper Miners ETF,Base Metals,ETF,
+PICK,iShares MSCI Global Metals & Mining Producers ETF,Base Metals,ETF,
+XME,SPDR S&P Metals & Mining ETF,Base & Industrial Metals,ETF,
+DBB,Invesco DB Base Metals Fund,Base Metals,ETF,
+LIT,Global X Lithium & Battery Tech ETF,Critical Minerals,ETF,
+REMX,VanEck Rare Earth & Strategic Metals ETF,Critical Minerals,ETF,
+URA,Global X Uranium ETF,Critical Minerals,ETF,
+CL,WTI Crude Oil Futures (NYMEX),Oil & Gas,Futures,WTI
+BZ,Brent Crude Futures (ICE),Oil & Gas,Futures,BRENT
+NG,Natural Gas Futures (NYMEX),Oil & Gas,Futures,NATURAL_GAS
+USO,United States Oil Fund,Oil & Gas,ETF,
+BNO,United States Brent Oil Fund,Oil & Gas,ETF,
+DBO,Invesco DB Oil Fund,Oil & Gas,ETF,
+USL,United States 12 Month Oil Fund,Oil & Gas,ETF,
+OILK,ProShares K-1 Free Crude Oil ETF,Oil & Gas,ETF,
+UCO,ProShares Ultra Bloomberg Crude Oil (2x),Oil & Gas,ETF,
+XLE,Energy Select Sector SPDR ETF,Oil & Gas Equities,ETF,
+XOP,SPDR S&P Oil & Gas Exploration & Production ETF,Oil & Gas Equities,ETF,
+VDE,Vanguard Energy ETF,Oil & Gas Equities,ETF,
+IXC,iShares Global Energy ETF,Oil & Gas Equities,ETF,
+AMLP,Alerian MLP ETF,Oil & Gas Midstream,ETF,
+OIH,VanEck Oil Services ETF,Oil & Gas Services,ETF,
+XES,SPDR S&P Oil & Gas Equipment & Services ETF,Oil & Gas Services,ETF,
+PXJ,Invesco Oil & Gas Services ETF,Oil & Gas Services,ETF,
+DBC,Invesco DB Commodity Index Tracking Fund,Broad Commodities,ETF,
+GSG,iShares S&P GSCI Commodity-Indexed Trust,Broad Commodities,ETF,
+DBE,Invesco DB Energy Fund,Broad Commodities,ETF,
+PDBC,Invesco Optimum Yield Diversified Commodity,Broad Commodities,ETF,

@@ -1,0 +1,126 @@
+@page "/report/{RunId}"
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<PageTitle>Report @RunId — Komatsu</PageTitle>
+
+<MudStack Spacing="4" AlignItems="AlignItems.Start">
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                       Color="Color.Default"
+                       Href="/archive" />
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Intelligence Report</MudText>
+            <MudText Typo="Typo.caption" Color="Color.Secondary"
+                     Style="font-family:monospace;">
+                @RunId
+            </MudText>
+        </div>
+    </MudStack>
+
+    <MudPaper Elevation="1" Class="pa-6" Style="max-width:600px;width:100%;">
+        <MudStack Spacing="3" AlignItems="AlignItems.Center">
+
+            <MudIcon Icon="@Icons.Material.Filled.PictureAsPdf"
+                     Color="Color.Error" Style="font-size:4rem;" />
+
+            <MudText Typo="Typo.h6" Style="font-weight:700;text-align:center;">
+                Komatsu Market Intelligence Brief
+            </MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Style="text-align:center;">
+                Run @RunId &bull; @DateTime.Now.ToString("MMMM d, yyyy")
+            </MudText>
+
+            @if (_downloading)
+            {
+                <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Generating PDF…
+                    </MudText>
+                </MudStack>
+            }
+            else if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error">@_error</MudAlert>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Download"
+                           Size="Size.Large"
+                           FullWidth="true"
+                           OnClick="@Download">
+                    Download PDF
+                </MudButton>
+                <MudText Typo="Typo.caption" Color="Color.Secondary"
+                         Style="text-align:center;">
+                    The PDF will be downloaded to your device.
+                </MudText>
+            }
+
+            <MudDivider Style="width:100%;" />
+
+            <MudStack Row="true" Spacing="2" Style="width:100%;">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Archive"
+                           Href="/archive" FullWidth="true">
+                    Back to Archive
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.SmartToy"
+                           Href="/agent" FullWidth="true">
+                    New Run
+                </MudButton>
+            </MudStack>
+
+        </MudStack>
+    </MudPaper>
+
+</MudStack>
+
+@code {
+
+    [Parameter] public string RunId { get; set; } = string.Empty;
+
+    private bool    _downloading;
+    private string? _error;
+
+    private async Task Download()
+    {
+        _downloading = true;
+        _error       = null;
+        try
+        {
+            var bytes = await Api.DownloadReportAsync(RunId);
+            if (bytes is { Length: > 0 })
+            {
+                var b64 = Convert.ToBase64String(bytes);
+                await JS.InvokeVoidAsync("downloadFile",
+                    $"komatsu-brief-{RunId}.pdf", "application/pdf", b64);
+            }
+            else
+            {
+                _error = "Report not available yet. The backend may still be generating it.";
+            }
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _error = "PDF not yet generated — the backend encountered an error during report generation. Check the agent panel for details.";
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            _error = "Report not ready: the run has not completed yet. Return to the agent and wait for it to finish.";
+        }
+        catch
+        {
+            _error = "Failed to reach the backend. Please ensure it is running and try again.";
+        }
+        finally
+        {
+            _downloading = false;
+        }
+    }
+}

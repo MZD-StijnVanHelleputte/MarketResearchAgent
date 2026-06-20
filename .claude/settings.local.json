@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:komatsu.com)",
+      "WebFetch(domain:brandfetch.com)",
+      "WebFetch(domain:www.brandcolorcode.com)",
+      "WebFetch(domain:www.komatsu.com)",
+      "Bash(pip install *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(python3 -m pytest tests/unit/services/test_masterdata_service.py -v)"
+    ]
+  }
+}

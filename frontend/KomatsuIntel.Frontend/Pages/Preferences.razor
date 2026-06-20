@@ -1,0 +1,123 @@
+@page "/preferences"
+@inject ApiClient Api
+@using System.Text.Json
+
+<PageTitle>Preferences — Komatsu Market Intelligence</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-1" Style="font-weight:700;">Research Focus</MudText>
+<MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-5">
+    These settings tell the agent which assets, sites, and competitors to prioritise in every run.
+    Separate multiple values with commas.
+</MudText>
+
+<MudPaper Elevation="1" Class="pa-5" Style="max-width:560px;">
+    <MudStack Spacing="4">
+
+        <MudTextField @bind-Value="_equipmentModels"
+                      Label="Equipment models"
+                      HelperText="e.g. PC8000, HD785, WE1850"
+                      Variant="Variant.Outlined"
+                      Disabled="@_loading" />
+
+        <MudTextField @bind-Value="_mineSites"
+                      Label="Mine sites"
+                      HelperText="e.g. Boddington, Grasberg, Chuquicamata"
+                      Variant="Variant.Outlined"
+                      Disabled="@_loading" />
+
+        <MudTextField @bind-Value="_competitorTickers"
+                      Label="Competitor tickers"
+                      HelperText="e.g. CAT, HIT, EPAC"
+                      Variant="Variant.Outlined"
+                      Disabled="@_loading" />
+
+        @if (_saveResult is not null)
+        {
+            <MudAlert Severity="@(_saveError ? Severity.Error : Severity.Success)" Dense="true">
+                @_saveResult
+            </MudAlert>
+        }
+
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       OnClick="@Save"
+                       Disabled="@_loading">
+                @if (_loading) { <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" /> }
+                Save
+            </MudButton>
+            <MudButton Variant="Variant.Text"
+                       Color="Color.Primary"
+                       Href="/agent">
+                Back to Agent
+            </MudButton>
+        </MudStack>
+
+    </MudStack>
+</MudPaper>
+
+@code {
+
+    private string _equipmentModels    = string.Empty;
+    private string _mineSites          = string.Empty;
+    private string _competitorTickers  = string.Empty;
+
+    private bool    _loading    = false;
+    private string? _saveResult = null;
+    private bool    _saveError  = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        try
+        {
+            var resp = await Api.GetPreferencesAsync();
+            if (resp?.Preferences is not null)
+            {
+                _equipmentModels   = ReadPref(resp.Preferences, "equipment_models");
+                _mineSites         = ReadPref(resp.Preferences, "mine_sites");
+                _competitorTickers = ReadPref(resp.Preferences, "competitor_tickers");
+            }
+        }
+        catch { /* leave fields empty if load fails */ }
+        finally { _loading = false; }
+    }
+
+    private async Task Save()
+    {
+        _loading    = true;
+        _saveResult = null;
+        try
+        {
+            var payload = new
+            {
+                equipment_models   = ParseList(_equipmentModels),
+                mine_sites         = ParseList(_mineSites),
+                competitor_tickers = ParseList(_competitorTickers),
+            };
+            await Api.UpdatePreferencesAsync(payload);
+            _saveResult = "Preferences saved. You can now return to the Agent and ask your question.";
+            _saveError  = false;
+        }
+        catch (Exception ex)
+        {
+            _saveResult = $"Save failed: {ex.Message}";
+            _saveError  = true;
+        }
+        finally { _loading = false; }
+    }
+
+    private static List<string> ParseList(string input) =>
+        input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+             .ToList();
+
+    private static string ReadPref(Dictionary<string, object> prefs, string key)
+    {
+        if (!prefs.TryGetValue(key, out var raw)) return string.Empty;
+        if (raw is JsonElement elem && elem.ValueKind == JsonValueKind.Array)
+            return string.Join(", ", elem.EnumerateArray()
+                                        .Select(e => e.GetString() ?? string.Empty)
+                                        .Where(s => s.Length > 0));
+        return raw?.ToString() ?? string.Empty;
+    }
+}

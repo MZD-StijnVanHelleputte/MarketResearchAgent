@@ -1,0 +1,82 @@
+[
+  {
+    "name": "Hastings Deering",
+    "region": "Asia-Pacific",
+    "countries": ["Australia", "Papua New Guinea", "Solomon Islands", "Timor-Leste"],
+    "products": ["construction", "mining", "power_systems"],
+    "parent": "Sime Darby Industrial",
+    "website": "https://www.hastingsdeering.com.au"
+  },
+  {
+    "name": "WesTrac",
+    "region": "Asia-Pacific",
+    "countries": ["Australia", "China"],
+    "products": ["construction", "mining", "power_systems"],
+    "parent": "Seven Group Holdings",
+    "website": "https://www.westrac.com.au"
+  },
+  {
+    "name": "Komatsu Mining Corp",
+    "region": "Americas",
+    "countries": ["USA", "Canada", "Mexico", "Chile", "Peru", "Brazil", "Colombia", "Argentina"],
+    "products": ["mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.com/en/products/mining/"
+  },
+  {
+    "name": "Komatsu Europe International",
+    "region": "Europe",
+    "countries": ["Germany", "UK", "France", "Italy", "Spain", "Netherlands", "Belgium", "Poland", "Sweden", "Norway", "Finland"],
+    "products": ["construction", "mining", "utility"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.eu/en"
+  },
+  {
+    "name": "Komatsu Middle East & Africa",
+    "region": "Middle East & Africa",
+    "countries": ["South Africa", "Zambia", "DRC", "Ghana", "Tanzania", "Mozambique", "UAE", "Saudi Arabia"],
+    "products": ["construction", "mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.com/en/about/global-network/"
+  },
+  {
+    "name": "Komatsu CIS",
+    "region": "CIS",
+    "countries": ["Russia", "Kazakhstan", "Ukraine", "Uzbekistan"],
+    "products": ["construction", "mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.ru"
+  },
+  {
+    "name": "Komatsu India",
+    "region": "South Asia",
+    "countries": ["India"],
+    "products": ["construction", "mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.in"
+  },
+  {
+    "name": "Komatsu Indonesia",
+    "region": "Southeast Asia",
+    "countries": ["Indonesia"],
+    "products": ["construction", "mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.co.id"
+  },
+  {
+    "name": "Komatsu Brasil",
+    "region": "South America",
+    "countries": ["Brazil"],
+    "products": ["construction", "mining"],
+    "parent": "Komatsu Ltd",
+    "website": "https://www.komatsu.com.br"
+  },
+  {
+    "name": "Blackwoods",
+    "region": "Asia-Pacific",
+    "countries": ["Australia", "New Zealand"],
+    "products": ["parts", "maintenance_supplies"],
+    "parent": "Wesfarmers Industrial & Safety",
+    "website": "https://www.blackwoods.com.au"
+  }
+]

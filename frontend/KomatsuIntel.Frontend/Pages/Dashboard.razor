@@ -1,0 +1,302 @@
+@page "/dashboard"
+@using KomatsuIntel.Frontend.Services
+@inject ApiClient Api
+
+<PageTitle>Dashboard — Komatsu Market Intelligence</PageTitle>
+
+<MudStack Spacing="4">
+
+    @* ── Header ─────────────────────────────────────────────────────── *@
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween"
+              Class="flex-wrap gap-2">
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Dashboard</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Agent run history, token consumption, and API cost monitoring
+            </MudText>
+        </div>
+        <MudChip T="string" Icon="@Icons.Material.Filled.CalendarToday"
+                 Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small">
+            Last 30 days
+        </MudChip>
+    </MudStack>
+
+    @* ── KPI Cards ───────────────────────────────────────────────────── *@
+    <MudGrid Spacing="3">
+
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="1" Class="pa-4">
+                <MudStack Spacing="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudIcon Icon="@Icons.Material.Filled.PlayCircle"
+                                 Color="Color.Primary" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">
+                            Total Runs
+                        </MudText>
+                    </MudStack>
+                    <MudText Typo="Typo.h4" Style="font-weight:800;color:#140A9A;">
+                        @_summary.TotalRuns
+                    </MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Success">
+                        <MudIcon Icon="@Icons.Material.Filled.TrendingUp"
+                                 Size="Size.Small" Style="vertical-align:-3px;" />
+                        +3 this week
+                    </MudText>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="1" Class="pa-4">
+                <MudStack Spacing="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudIcon Icon="@Icons.Material.Filled.Bolt"
+                                 Color="Color.Warning" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">
+                            Total Tokens
+                        </MudText>
+                    </MudStack>
+                    <MudText Typo="Typo.h4" Style="font-weight:800;">
+                        @FormatLargeNumber(_summary.TotalTokens)
+                    </MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Avg @(_summary.TotalRuns > 0
+                              ? (_summary.TotalTokens / _summary.TotalRuns).ToString("N0")
+                              : "—") / run
+                    </MudText>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="1" Class="pa-4">
+                <MudStack Spacing="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudIcon Icon="@Icons.Material.Filled.AttachMoney"
+                                 Color="Color.Success" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">
+                            Total Cost
+                        </MudText>
+                    </MudStack>
+                    <MudText Typo="Typo.h4" Style="font-weight:800;">
+                        $@_summary.TotalCostUsd.ToString("F2")
+                    </MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Avg $@(_summary.TotalRuns > 0
+                               ? (_summary.TotalCostUsd / _summary.TotalRuns).ToString("F2")
+                               : "—") / run
+                    </MudText>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="6" sm="3">
+            <MudPaper Elevation="1" Class="pa-4">
+                <MudStack Spacing="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudIcon Icon="@Icons.Material.Filled.Timer"
+                                 Color="Color.Info" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">
+                            Avg Duration
+                        </MudText>
+                    </MudStack>
+                    <MudText Typo="Typo.h4" Style="font-weight:800;">
+                        @_summary.AvgDurationSeconds.ToString("F0")s
+                    </MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Hard limit: 180 s
+                    </MudText>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+
+    </MudGrid>
+
+    @* ── Token usage per stage (visual breakdown) ────────────────────── *@
+    <MudPaper Elevation="1" Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Style="font-weight:700;margin-bottom:16px;">
+            Token usage by stage (last 6 runs)
+        </MudText>
+        <MudStack Spacing="3">
+            @foreach (var r in _summary.RecentRuns)
+            {
+                var total = r.TotalTokens > 0 ? r.TotalTokens : 1;
+                var understandPct = (int)(0.25 * 100);
+                var collectPct    = (int)(0.55 * 100);
+                var synthesizePct = 100 - understandPct - collectPct;
+
+                <MudStack Spacing="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center"
+                              Justify="Justify.SpaceBetween">
+                        <MudText Typo="Typo.caption" Style="font-weight:600;max-width:220px;
+                                                             overflow:hidden;text-overflow:ellipsis;
+                                                             white-space:nowrap;">
+                            @r.Query
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @r.TotalTokens.ToString("N0") tokens
+                        </MudText>
+                    </MudStack>
+                    <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;gap:2px;">
+                        <div style="flex:@understandPct;background:#140A9A;opacity:0.9;"></div>
+                        <div style="flex:@collectPct;background:#FFB700;"></div>
+                        <div style="flex:@synthesizePct;background:#22C55E;opacity:0.85;"></div>
+                    </div>
+                    <MudStack Row="true" Spacing="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            <span style="color:#140A9A;">■</span> Understand (@understandPct%)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            <span style="color:#FFB700;">■</span> Collect (@collectPct%)
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            <span style="color:#22C55E;">■</span> Synthesize (@synthesizePct%)
+                        </MudText>
+                    </MudStack>
+                </MudStack>
+            }
+        </MudStack>
+    </MudPaper>
+
+    @* ── Recent runs table ───────────────────────────────────────────── *@
+    <MudPaper Elevation="1" Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Style="font-weight:700;margin-bottom:12px;">
+            Recent runs
+        </MudText>
+        <MudTable Items="@_summary.RecentRuns" Dense="true" Hover="true"
+                  Breakpoint="Breakpoint.Sm" Striped="true" Elevation="0">
+            <HeaderContent>
+                <MudTh>Run ID</MudTh>
+                <MudTh>Query</MudTh>
+                <MudTh>Started</MudTh>
+                <MudTh>Duration</MudTh>
+                <MudTh>Tokens</MudTh>
+                <MudTh>Tool calls</MudTh>
+                <MudTh>Cost</MudTh>
+                <MudTh>Status</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Run ID">
+                    <MudText Typo="Typo.caption"
+                             Style="font-family:monospace;color:#140A9A;">
+                        @context.RunId
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Query">
+                    <MudText Typo="Typo.caption"
+                             Style="max-width:220px;overflow:hidden;
+                                    text-overflow:ellipsis;white-space:nowrap;display:block;">
+                        @context.Query
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Started">
+                    <MudText Typo="Typo.caption">@context.StartedAt</MudText>
+                </MudTd>
+                <MudTd DataLabel="Duration">
+                    <MudText Typo="Typo.caption">@context.DurationSeconds s</MudText>
+                </MudTd>
+                <MudTd DataLabel="Tokens">
+                    <MudText Typo="Typo.caption">@context.TotalTokens.ToString("N0")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Tool calls">
+                    <MudText Typo="Typo.caption">@context.ToolCalls</MudText>
+                </MudTd>
+                <MudTd DataLabel="Cost">
+                    <MudText Typo="Typo.caption">$@context.CostUsd.ToString("F2")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@StatusColor(context.Status)"
+                             Variant="Variant.Filled">
+                        @context.Status
+                    </MudChip>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+
+    @* ── Live usage (tracking only — no hard caps) ────────────────────── *@
+    <MudPaper Elevation="1" Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Style="font-weight:700;margin-bottom:12px;">
+            Live usage (tracking only — no hard caps)
+        </MudText>
+        <MudGrid Spacing="3">
+            @foreach (var t in Thresholds)
+            {
+                <MudItem xs="12" sm="4">
+                    <MudStack Spacing="1">
+                        <MudStack Row="true" AlignItems="AlignItems.Center"
+                                  Justify="Justify.SpaceBetween">
+                            <MudText Typo="Typo.caption" Style="font-weight:600;">@t.Label</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @t.Current / @t.Limit
+                            </MudText>
+                        </MudStack>
+                        <MudProgressLinear Value="@t.Pct" Color="@t.Color"
+                                           Rounded="true" Size="Size.Small" />
+                    </MudStack>
+                </MudItem>
+            }
+        </MudGrid>
+    </MudPaper>
+
+</MudStack>
+
+@code {
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "done" or "Complete"      => Color.Success,
+        "partial" or "Partial"    => Color.Warning,
+        "running" or "Running"    => Color.Info,
+        _ when status.StartsWith("waiting") => Color.Info,
+        _                         => Color.Error,
+    };
+
+    private static string FormatLargeNumber(long n) =>
+        n >= 1_000_000 ? $"{n / 1_000_000.0:F1}M"
+        : n >= 1_000   ? $"{n / 1_000.0:F0}k"
+        : n.ToString();
+
+    private DashboardSummary _summary = new(
+        TotalRuns:          0,
+        TotalTokens:        0,
+        TotalCostUsd:       0.0,
+        AvgDurationSeconds: 0.0,
+        RecentRuns:         []);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var summary = await Api.GetDashboardAsync();
+            if (summary is not null)
+                _summary = summary;
+        }
+        catch
+        {
+            // Leave the zeroed summary if the backend is unreachable.
+        }
+    }
+
+    private record Threshold(string Label, double Current, double Limit, Color Color)
+    {
+        public int Pct => Limit > 0 ? Math.Min(100, (int)(Current / Limit * 100)) : 0;
+    }
+
+    // Cost/calls are tracked live with no hard caps — these bars are informational
+    // averages-per-run against a soft reference scale, not enforced limits.
+    private Threshold[] Thresholds =>
+    [
+        new($"Avg spend / run (tracked, no cap)",
+            _summary.TotalRuns > 0 ? _summary.TotalCostUsd / _summary.TotalRuns : 0, 1.00, Color.Info),
+        new($"Avg tokens / run (tracked, no cap)",
+            _summary.TotalRuns > 0 ? (double)_summary.TotalTokens / _summary.TotalRuns : 0, 200_000, Color.Info),
+        new($"Avg duration / run (180 s reference)",
+            _summary.AvgDurationSeconds, 180, Color.Info),
+    ];
+}

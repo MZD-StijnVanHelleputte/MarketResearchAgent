@@ -1,0 +1,128 @@
+[
+  {
+    "model": "PC8000-11E",
+    "category": "hydraulic_shovel",
+    "payload_t": null,
+    "bucket_m3": 38,
+    "application": "mining",
+    "description": "Ultra-large hydraulic mining shovel for copper and iron ore operations",
+    "website": "https://www.komatsu.com/en/products/mining/hydraulic-shovels/pc8000-11e/"
+  },
+  {
+    "model": "PC5500-11",
+    "category": "hydraulic_shovel",
+    "payload_t": null,
+    "bucket_m3": 28,
+    "application": "mining",
+    "description": "Large hydraulic mining shovel for high-productivity loading",
+    "website": "https://www.komatsu.com/en/products/mining/hydraulic-shovels/pc5500-11/"
+  },
+  {
+    "model": "PC3000-11",
+    "category": "hydraulic_shovel",
+    "payload_t": null,
+    "bucket_m3": 15,
+    "application": "mining",
+    "description": "Medium hydraulic mining shovel for versatile mining applications",
+    "website": "https://www.komatsu.com/en/products/mining/hydraulic-shovels/pc3000-11/"
+  },
+  {
+    "model": "PC2000-11",
+    "category": "hydraulic_shovel",
+    "payload_t": null,
+    "bucket_m3": 12,
+    "application": "mining",
+    "description": "Large hydraulic excavator adaptable for mining and quarrying",
+    "website": "https://www.komatsu.com/en/products/mining/hydraulic-shovels/pc2000-11/"
+  },
+  {
+    "model": "830E-5",
+    "category": "dump_truck",
+    "payload_t": 186,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "High-productivity rigid dump truck for large surface mining operations",
+    "website": "https://www.komatsu.com/en/products/mining/dump-trucks/830e-5/"
+  },
+  {
+    "model": "860E-1K",
+    "category": "dump_truck",
+    "payload_t": 218,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "Ultra-class rigid dump truck for maximum productivity",
+    "website": "https://www.komatsu.com/en/products/mining/dump-trucks/860e-1k/"
+  },
+  {
+    "model": "980E-4",
+    "category": "dump_truck",
+    "payload_t": 290,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "World's largest electric drive dump truck",
+    "website": "https://www.komatsu.com/en/products/mining/dump-trucks/980e-4/"
+  },
+  {
+    "model": "730E-8",
+    "category": "dump_truck",
+    "payload_t": 179,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "Proven electric drive haul truck for open-pit mining",
+    "website": "https://www.komatsu.com/en/products/mining/dump-trucks/730e-8/"
+  },
+  {
+    "model": "D575A-3SD",
+    "category": "dozer",
+    "payload_t": null,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "World's largest production dozer for large-scale earthmoving",
+    "website": "https://www.komatsu.com/en/products/construction/bulldozers/d575a-3sd/"
+  },
+  {
+    "model": "D375A-8",
+    "category": "dozer",
+    "payload_t": null,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "Large mining dozer for high-volume earthmoving and reclamation",
+    "website": "https://www.komatsu.com/en/products/construction/bulldozers/d375a-8/"
+  },
+  {
+    "model": "D275AX-5E0",
+    "category": "dozer",
+    "payload_t": null,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "Large crawler dozer for surface mining and land reclamation",
+    "website": "https://www.komatsu.com/en/products/construction/bulldozers/d275ax-5e0/"
+  },
+  {
+    "model": "WA1200-6",
+    "category": "wheel_loader",
+    "payload_t": 20,
+    "bucket_m3": 12.5,
+    "application": "mining",
+    "description": "Ultra-large wheel loader for high-volume loading of haul trucks",
+    "website": "https://www.komatsu.com/en/products/mining/wheel-loaders/wa1200-6/"
+  },
+  {
+    "model": "WA800-8",
+    "category": "wheel_loader",
+    "payload_t": 13.5,
+    "bucket_m3": 8,
+    "application": "mining",
+    "description": "Large mining wheel loader for loading and carrying operations",
+    "website": "https://www.komatsu.com/en/products/mining/wheel-loaders/wa800-8/"
+  },
+  {
+    "model": "GD955-7",
+    "category": "motor_grader",
+    "payload_t": null,
+    "bucket_m3": null,
+    "application": "mining",
+    "description": "Large motor grader for haul road maintenance in mining operations",
+    "website": "https://www.komatsu.com/en/products/construction/motor-graders/gd955-7/"
+  }
+]

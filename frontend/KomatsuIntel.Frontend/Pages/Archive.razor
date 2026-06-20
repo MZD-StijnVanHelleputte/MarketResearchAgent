@@ -1,0 +1,452 @@
+@page "/archive"
+@inject ApiClient Api
+@using Microsoft.AspNetCore.Components.Forms
+
+<PageTitle>Archive — Komatsu Market Intelligence</PageTitle>
+
+<MudStack Spacing="4">
+
+    @* ── Header ─────────────────────────────────────────────────────── *@
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween"
+              Class="flex-wrap gap-2">
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Archive</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                All completed intelligence reports and past execution plans
+            </MudText>
+        </div>
+        <MudTextField @bind-Value="_search"
+                      Placeholder="Search by query or domain…"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Style="min-width:280px;"
+                      Clearable="true"
+                      Immediate="true" />
+    </MudStack>
+
+    @* ── Tabs ────────────────────────────────────────────────────────── *@
+    <MudTabs Elevation="0" Rounded="true" Color="Color.Primary" ApplyEffectsToContainer="true">
+
+        @* ── Tab 1: Reports ──────────────────────────────────────────── *@
+        <MudTabPanel Text="Reports" Icon="@Icons.Material.Filled.Description"
+                     BadgeData="@_reports.Length.ToString()" BadgeColor="Color.Primary">
+
+            <MudGrid Spacing="3" Class="mt-3">
+                @foreach (var r in FilteredReports)
+                {
+                    <MudItem xs="12" sm="6" lg="4">
+                        <MudCard Elevation="1">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center"
+                                              Justify="Justify.SpaceBetween" Spacing="1">
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            @r.CreatedAt
+                                        </MudText>
+                                        <MudChip T="string"
+                                                 Size="Size.Small"
+                                                 Color="@StatusColor(r.Status)"
+                                                 Variant="Variant.Filled">
+                                            @r.Status
+                                        </MudChip>
+                                    </MudStack>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent Class="pt-0">
+                                <MudText Typo="Typo.body2" Class="report-card-query mb-2">
+                                    @r.Query
+                                </MudText>
+                                <MudStack Row="true" Spacing="1" Class="flex-wrap gap-1">
+                                    @foreach (var d in r.DomainsActive)
+                                    {
+                                        <MudChip T="string" Size="Size.Small"
+                                                 Variant="Variant.Outlined"
+                                                 Color="Color.Primary">
+                                            @d
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                            </MudCardContent>
+                            <MudCardActions>
+                                <MudStack Row="true" AlignItems="AlignItems.Center"
+                                          Justify="Justify.SpaceBetween" Style="width:100%;padding:0 8px;">
+                                    <MudStack Row="true" Spacing="2">
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            <MudIcon Icon="@Icons.Material.Outlined.Bolt"
+                                                     Size="Size.Small" Style="vertical-align:-3px;" />
+                                            @r.TokensUsed.ToString("N0") tokens
+                                        </MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            <MudIcon Icon="@Icons.Material.Outlined.AttachMoney"
+                                                     Size="Size.Small" Style="vertical-align:-3px;" />
+                                            @r.CostUsd.ToString("F2")
+                                        </MudText>
+                                    </MudStack>
+                                    <MudTooltip Text="Download PDF">
+                                        <MudIconButton Icon="@Icons.Material.Filled.PictureAsPdf"
+                                                       Color="Color.Primary"
+                                                       Size="Size.Small"
+                                                       Href="@($"/report/{r.RunId}")" />
+                                    </MudTooltip>
+                                </MudStack>
+                            </MudCardActions>
+                        </MudCard>
+                    </MudItem>
+                }
+                @if (!FilteredReports.Any())
+                {
+                    <MudItem xs="12">
+                        <MudAlert Severity="Severity.Info">
+                            No reports match your search.
+                        </MudAlert>
+                    </MudItem>
+                }
+            </MudGrid>
+
+        </MudTabPanel>
+
+        @* ── Tab 2: Episodic Memory ───────────────────────────────────── *@
+        <MudTabPanel Text="Episodic Memory" Icon="@Icons.Material.Filled.Psychology">
+
+            <MudStack Spacing="2" Class="mt-3">
+                <MudAlert Severity="Severity.Info" Dense="true">
+                    Episodic memory stores successful execution plans from past runs and uses them
+                    to ground new plans at the Understand stage.
+                    Enabled once sufficient high-quality examples have accumulated.
+                </MudAlert>
+
+                @if (!_episodicPlans.Any())
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary"
+                             Style="display:block;text-align:center;padding:32px 0;">
+                        No episodic memories yet. They accumulate as high-quality runs complete.
+                    </MudText>
+                }
+                @foreach (var ep in _episodicPlans)
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <MudStack Row="true" AlignItems="AlignItems.Center"
+                                      Justify="Justify.SpaceBetween" Style="width:100%;">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                    <MudIcon Icon="@Icons.Material.Filled.AccountTree"
+                                             Color="Color.Primary" Size="Size.Small" />
+                                    <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                        @ep.Query
+                                    </MudText>
+                                </MudStack>
+                                <MudStack Row="true" Spacing="1">
+                                    <MudChip T="string" Size="Size.Small"
+                                             Variant="Variant.Outlined" Color="Color.Success">
+                                        @ep.FeasibilityScore.ToString("P0") feasibility
+                                    </MudChip>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                             Style="align-self:center;">
+                                        @ep.CreatedAt
+                                    </MudText>
+                                </MudStack>
+                            </MudStack>
+                        </TitleContent>
+                        <ChildContent>
+                            <MudStack Spacing="2" Class="pa-2">
+                                <MudText Typo="Typo.caption"
+                                         Style="font-weight:600;text-transform:uppercase;
+                                                letter-spacing:0.06em;color:#6B7280;">
+                                    Domains active
+                                </MudText>
+                                <MudStack Row="true" Spacing="1" Class="flex-wrap gap-1">
+                                    @foreach (var d in ep.DomainsActive)
+                                    {
+                                        <MudChip T="string" Size="Size.Small"
+                                                 Color="Color.Primary" Variant="Variant.Outlined">
+                                            @d
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                                <MudText Typo="Typo.caption"
+                                         Style="font-weight:600;text-transform:uppercase;
+                                                letter-spacing:0.06em;color:#6B7280;margin-top:4px;">
+                                    Plan rationale
+                                </MudText>
+                                <MudText Typo="Typo.body2">@ep.Rationale</MudText>
+                                <MudStack Row="true" Spacing="3">
+                                    <MudText Typo="Typo.caption">
+                                        Tokens: <strong>@ep.TokensUsed.ToString("N0")</strong>
+                                    </MudText>
+                                    <MudText Typo="Typo.caption">
+                                        Duration: <strong>@ep.DurationSeconds s</strong>
+                                    </MudText>
+                                    <MudText Typo="Typo.caption">
+                                        Run ID: <strong>@ep.RunId</strong>
+                                    </MudText>
+                                </MudStack>
+                            </MudStack>
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudStack>
+
+        </MudTabPanel>
+
+        @* ── Tab 3: Industry Knowledge ────────────────────────────────── *@
+        <MudTabPanel Text="Industry Knowledge" Icon="@Icons.Material.Filled.MenuBook"
+                     BadgeData="@_knowledgeDocs.Count.ToString()" BadgeColor="Color.Primary">
+
+            <MudStack Spacing="3" Class="mt-3">
+
+                <MudAlert Severity="Severity.Info" Dense="true">
+                    Documents here are chunked, embedded with Mistral, and stored in ChromaDB.
+                    They ground the agent during the Understand and Synthesize stages.
+                </MudAlert>
+
+                @* Upload card *@
+                <MudPaper Elevation="1" Class="pa-4">
+                    <MudText Typo="Typo.subtitle2" Class="mb-3">Add Documents</MudText>
+                    <MudStack Spacing="2">
+                        <InputFile id="knowledgeFileInput" OnChange="OnFilesSelected" multiple
+                                   accept=".md,.txt,.pdf,.docx,.pptx" style="display:none" />
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudButton Variant="Variant.Outlined"
+                                       StartIcon="@Icons.Material.Filled.AttachFile"
+                                       HtmlTag="label" for="knowledgeFileInput"
+                                       Size="Size.Small">
+                                Choose Files
+                            </MudButton>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                Select one or more files — each uploads and is converted/chunked/embedded independently.
+                            </MudText>
+                        </MudStack>
+                        <MudSelect T="string" @bind-Value="_selectedDomain" Label="Domain (applies to files you select next)"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense">
+                            <MudSelectItem Value="@("mining")">Mining</MudSelectItem>
+                            <MudSelectItem Value="@("construction")">Construction</MudSelectItem>
+                            <MudSelectItem Value="@("heavy_equipment")">Heavy Equipment</MudSelectItem>
+                        </MudSelect>
+                    </MudStack>
+                </MudPaper>
+
+                @* In-flight / recent upload jobs *@
+                @if (_uploadItems.Count > 0)
+                {
+                    <MudPaper Elevation="1" Class="pa-4">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                            <MudText Typo="Typo.subtitle2">Uploads</MudText>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearFinishedUploads">
+                                Clear finished
+                            </MudButton>
+                        </MudStack>
+                        <MudStack Spacing="1">
+                            @foreach (var item in _uploadItems)
+                            {
+                                var (label, color) = StageDisplay(item);
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="py-1">
+                                    <MudText Typo="Typo.body2" Style="min-width:220px;">@item.FileName</MudText>
+                                    <MudChip T="string" Size="Size.Small" Color="color">@label</MudChip>
+                                    @if (item.Error is not null)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Error">@item.Error</MudText>
+                                    }
+                                </MudStack>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                }
+
+                @* Document table *@
+                <MudTable Items="@_knowledgeDocs" Dense="true" Hover="true"
+                          Loading="@_loadingKnowledge" Striped="true" Elevation="1">
+                    <ToolBarContent>
+                        <MudText Typo="Typo.subtitle2">Loaded Documents</MudText>
+                        <MudSpacer />
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                       OnClick="LoadKnowledge" Size="Size.Small" />
+                    </ToolBarContent>
+                    <HeaderContent>
+                        <MudTh>Source</MudTh>
+                        <MudTh>Domain</MudTh>
+                        <MudTh>Chunks</MudTh>
+                        <MudTh>Added</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Source</MudTd>
+                        <MudTd>@context.Domain</MudTd>
+                        <MudTd>@context.ChunkCount</MudTd>
+                        <MudTd>@(context.AddedAt.Length >= 10 ? context.AddedAt[..10] : context.AddedAt)</MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                           Color="Color.Error" Size="Size.Small"
+                                           Disabled="@_deleting"
+                                           OnClick="@(() => DeleteDocument(context.Source))" />
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                 Style="display:block;text-align:center;padding:32px 0;">
+                            No documents loaded. Upload a Markdown, Word, PDF, or PowerPoint file above.
+                        </MudText>
+                    </NoRecordsContent>
+                </MudTable>
+
+            </MudStack>
+
+        </MudTabPanel>
+
+    </MudTabs>
+
+</MudStack>
+
+@code {
+
+    private string _search = string.Empty;
+
+    // ── Knowledge tab state ──────────────────────────────────────────────────
+    private List<KnowledgeDocument> _knowledgeDocs = [];
+    private List<UploadItem> _uploadItems = [];
+    private bool     _loadingKnowledge;
+    private bool     _deleting;
+    private string   _selectedDomain = "mining";
+
+    private class UploadItem
+    {
+        public required string FileName { get; init; }
+        public required string Domain   { get; init; }
+        public string  JobId          { get; set; } = "";
+        public string  Stage          { get; set; } = "queued";
+        public int?    ChunksTotal    { get; set; }
+        public int?    ChunksEmbedded { get; set; }
+        public int?    ChunksAdded    { get; set; }
+        public string? Error          { get; set; }
+    }
+
+    private static (string Label, Color Color) StageDisplay(UploadItem item) => item.Stage switch
+    {
+        "queued"     => ("Queued", Color.Default),
+        "converting" => ("Converting…", Color.Info),
+        "chunking"   => ("Chunking…", Color.Info),
+        "embedding"  => (item.ChunksTotal is > 0
+                            ? $"Embedding {item.ChunksEmbedded ?? 0}/{item.ChunksTotal}…"
+                            : "Embedding…", Color.Info),
+        "done"       => ($"Done — {item.ChunksAdded} chunk(s)", Color.Success),
+        "error"      => ("Error", Color.Error),
+        _            => (item.Stage, Color.Default),
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadKnowledge();
+
+    private async Task LoadKnowledge()
+    {
+        _loadingKnowledge = true;
+        try
+        {
+            var result = await Api.ListKnowledgeAsync();
+            _knowledgeDocs = result?.Documents ?? [];
+        }
+        catch { _knowledgeDocs = []; }
+        finally { _loadingKnowledge = false; }
+    }
+
+    private async Task OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles(maximumFileCount: 20))
+        {
+            var item = new UploadItem { FileName = file.Name, Domain = _selectedDomain };
+            _uploadItems.Add(item);
+            StateHasChanged();
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 50_000_000);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            _ = ProcessUpload(item, buffer.ToArray());
+        }
+    }
+
+    private async Task ProcessUpload(UploadItem item, byte[] bytes)
+    {
+        try
+        {
+            var created = await Api.CreateKnowledgeJobAsync(item.FileName, item.Domain, bytes);
+            if (created is null) throw new InvalidOperationException("No job_id returned.");
+            item.JobId = created.JobId;
+            await PollJob(item);
+        }
+        catch (Exception ex)
+        {
+            item.Stage = "error";
+            item.Error = ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PollJob(UploadItem item)
+    {
+        while (true)
+        {
+            await Task.Delay(1500);
+            KnowledgeJobStatus? status;
+            try
+            {
+                status = await Api.GetKnowledgeJobAsync(item.JobId);
+            }
+            catch { continue; } // transient — retry
+
+            if (status is null) continue;
+
+            item.Stage          = status.Stage;
+            item.ChunksTotal    = status.ChunksTotal;
+            item.ChunksEmbedded = status.ChunksEmbedded;
+            item.ChunksAdded    = status.ChunksAdded;
+            item.Error          = status.Error;
+            StateHasChanged();
+
+            if (status.Stage is "done" or "error") break;
+        }
+
+        if (item.Stage == "done")
+            await LoadKnowledge();
+    }
+
+    private void ClearFinishedUploads()
+        => _uploadItems = _uploadItems.Where(i => i.Stage is not "done" and not "error").ToList();
+
+    private async Task DeleteDocument(string source)
+    {
+        _deleting = true;
+        try
+        {
+            await Api.DeleteKnowledgeAsync(source);
+            await LoadKnowledge();
+        }
+        catch { }
+        finally { _deleting = false; }
+    }
+
+    private IEnumerable<ReportSummary> FilteredReports => string.IsNullOrWhiteSpace(_search)
+        ? _reports
+        : _reports.Where(r =>
+            r.Query.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+            r.DomainsActive.Any(d => d.Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    private static Color StatusColor(string status) => status switch
+    {
+        "Complete" => Color.Success,
+        "Partial"  => Color.Warning,
+        _          => Color.Error,
+    };
+
+    private static readonly ReportSummary[] _reports = [];
+
+    private record EpisodicPlan(
+        string   RunId,
+        string   Query,
+        string   CreatedAt,
+        double   FeasibilityScore,
+        string   Rationale,
+        string[] DomainsActive,
+        int      TokensUsed,
+        int      DurationSeconds);
+
+    private static readonly EpisodicPlan[] _episodicPlans = [];
+}

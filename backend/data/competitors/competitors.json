@@ -1,0 +1,102 @@
+[
+  {
+    "name": "Caterpillar",
+    "ticker": "CAT",
+    "exchange": "NYSE",
+    "segment": "mining_construction_equipment",
+    "hq_country": "USA",
+    "hq_city": "Irving, TX",
+    "revenue_usd_bn_fy2023": 67.1,
+    "website": "https://www.caterpillar.com/en/products/caterpillar/mining.html"
+  },
+  {
+    "name": "Hitachi Construction Machinery",
+    "ticker": "6305.T",
+    "exchange": "TSE",
+    "segment": "hydraulic_excavators_mining",
+    "hq_country": "Japan",
+    "hq_city": "Tokyo",
+    "revenue_usd_bn_fy2023": 9.8,
+    "website": "https://www.hitachicm.com/global/en/products/mining/"
+  },
+  {
+    "name": "Sandvik",
+    "ticker": "SAND.ST",
+    "exchange": "Nasdaq Stockholm",
+    "segment": "underground_mining_equipment_tools",
+    "hq_country": "Sweden",
+    "hq_city": "Stockholm",
+    "revenue_usd_bn_fy2023": 14.4,
+    "website": "https://www.sandvik.com/en/industries/mining/"
+  },
+  {
+    "name": "Epiroc",
+    "ticker": "EPI-A.ST",
+    "exchange": "Nasdaq Stockholm",
+    "segment": "mining_rock_excavation",
+    "hq_country": "Sweden",
+    "hq_city": "Stockholm",
+    "revenue_usd_bn_fy2023": 6.8,
+    "website": "https://www.epiroc.com/en-au/products/surface-mining-equipment"
+  },
+  {
+    "name": "Volvo Construction Equipment",
+    "ticker": "VOLV-B.ST",
+    "exchange": "Nasdaq Stockholm",
+    "segment": "construction_quarrying_equipment",
+    "hq_country": "Sweden",
+    "hq_city": "Gothenburg",
+    "revenue_usd_bn_fy2023": 11.2,
+    "website": "https://www.volvoce.com/united-states/en-us/machines/mining/"
+  },
+  {
+    "name": "Liebherr",
+    "ticker": null,
+    "exchange": null,
+    "segment": "mining_equipment_cranes",
+    "hq_country": "Germany",
+    "hq_city": "Biberach an der Riß",
+    "revenue_usd_bn_fy2023": 14.0,
+    "website": "https://www.liebherr.com/en/int/products/mining/mining.html"
+  },
+  {
+    "name": "Terex",
+    "ticker": "TEX",
+    "exchange": "NYSE",
+    "segment": "aerial_work_platforms_materials_processing",
+    "hq_country": "USA",
+    "hq_city": "Norwalk, CT",
+    "revenue_usd_bn_fy2023": 5.1,
+    "website": "https://www.terex.com/en"
+  },
+  {
+    "name": "Deere & Company (John Deere)",
+    "ticker": "DE",
+    "exchange": "NYSE",
+    "segment": "construction_forestry_equipment",
+    "hq_country": "USA",
+    "hq_city": "Moline, IL",
+    "revenue_usd_bn_fy2023": 15.8,
+    "website": "https://www.deere.com/en/construction-equipment/"
+  },
+  {
+    "name": "XCMG Group",
+    "ticker": "000425.SZ",
+    "exchange": "Shenzhen",
+    "segment": "construction_mining_equipment",
+    "hq_country": "China",
+    "hq_city": "Xuzhou",
+    "revenue_usd_bn_fy2023": 17.0,
+    "website": "https://www.xcmg.com/en/products/mining/"
+  },
+  {
+    "name": "SANY Group",
+    "ticker": "600031.SS",
+    "exchange": "Shanghai",
+    "segment": "construction_mining_equipment",
+    "hq_country": "China",
+    "hq_city": "Changsha",
+    "revenue_usd_bn_fy2023": 12.3,
+    "website": "https://www.sanyglobal.com/product/mining/"
+  }
+]
