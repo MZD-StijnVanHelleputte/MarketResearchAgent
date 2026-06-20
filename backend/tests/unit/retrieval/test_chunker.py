@@ -65,6 +65,27 @@ def test_chunk_document_falls_back_to_chunk_text_when_no_headers():
     assert len(chunks) >= 1
 
 
+def test_chunk_text_caps_pathological_whitespace_free_run():
+    """A single huge run with no whitespace (e.g. glued PDF table extraction)
+    must still be hard-split by byte length, even though it counts as just
+    one 'word' (the failure mode a word-count-only cap missed)."""
+    chunker = Chunker(chunk_size=600, chunk_overlap=100)
+    text = "1234567890,./;'" * 20_000
+    chunks = chunker.chunk_text(text, source="s", domain="d")
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c.text.encode("utf-8")) <= Chunker._MAX_BYTES
+
+
+def test_chunk_document_caps_pathological_run_inside_section():
+    chunker = Chunker(chunk_size=600, chunk_overlap=100)
+    text = "# Section\n\n" + ("1234567890,./;'" * 10_000)
+    chunks = chunker.chunk_document(text, source="doc.md", domain="mining")
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(c.text.encode("utf-8")) <= Chunker._MAX_BYTES
+
+
 def test_each_chunk_has_unique_chunk_id_and_timestamp():
     chunker = Chunker(chunk_size=3, chunk_overlap=1)
     chunks = chunker.chunk_text("a b c d e f g", source="s", domain="d")

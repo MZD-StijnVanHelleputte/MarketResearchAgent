@@ -13,6 +13,8 @@ import re
 import time
 
 from config import settings
+from core.event_logger import log_event
+from core.friendly_names import friendly_tool
 from core.tot.schemas import ResearchContext
 from models.llm_client import LLMClient
 from prompts.research_prompt import research_messages
@@ -22,6 +24,12 @@ from core.tool_router import async_route
 logger = logging.getLogger(__name__)
 
 _FALLBACK_CONTEXT = ResearchContext()
+
+
+def _friendly_call_label(tool_name: str, arguments: dict) -> str:
+    topic = arguments.get("query") or arguments.get("name") or arguments.get("ticker") or ""
+    target = friendly_tool(tool_name)
+    return f"Searching {target} for \"{topic}\"…" if topic else f"Looking into {target}…"
 
 
 def _parse_research_json(raw: str) -> dict:
@@ -92,24 +100,40 @@ class ResearchAgent:
             if not response.tool_calls:
                 # LLM returned a final text answer — parse it
                 self.last_usage = total_usage
+                await log_event("progress", "Finished initial research — drafting candidate research plans…")
                 return self._parse_context(response.content or "", calls_made)
 
-            # Execute every tool call the LLM requested (may be batched)
-            tool_results_msg: dict = {"role": "tool", "content": []}
-            for tc in response.tool_calls:
-                if calls_made >= self._max_calls:
-                    break
-                try:
-                    result = await async_route(tc.name, tc.arguments)
-                    result_text = json.dumps(result)
-                except Exception as exc:
-                    result_text = json.dumps({"error": str(exc)})
-                calls_made += 1
-                tool_results_msg["content"].append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
+            # Execute the tool calls the LLM requested (bounded to the remaining
+            # budget), concurrently up to max_parallel_tool_calls. Mistral expects
+            # one flat "tool" message per call (content: str, tool_call_id: str) —
+            # not Anthropic's nested content-block shape — so each result becomes
+            # its own message rather than one combined one.
+            remaining = self._max_calls - calls_made
+            calls_to_run = response.tool_calls[:remaining]
+            sem = asyncio.Semaphore(settings.react.max_parallel_tool_calls)
+
+            async def _run_one(tc) -> dict:
+                await log_event("progress", _friendly_call_label(tc.name, tc.arguments))
+                async with sem:
+                    try:
+                        result = await async_route(tc.name, tc.arguments)
+                        result_text = json.dumps(result)
+                    except Exception as exc:
+                        result_text = json.dumps({"error": str(exc)})
+                        await log_event(
+                            "progress",
+                            "That search didn't return useful results — trying a different angle.",
+                            level="warning",
+                        )
+                return {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.name,
                     "content": result_text,
-                })
+                }
+
+            tool_messages = await asyncio.gather(*(_run_one(tc) for tc in calls_to_run))
+            calls_made += len(calls_to_run)
 
             # Append assistant message + tool results to the conversation
             messages = messages + [
@@ -119,9 +143,9 @@ class ResearchAgent:
                         "type": "function",
                         "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
                     }
-                    for tc in response.tool_calls
+                    for tc in calls_to_run
                 ]},
-                tool_results_msg,
+                *tool_messages,
             ]
 
         # Max calls reached — ask LLM to summarise what it has
@@ -135,6 +159,7 @@ class ResearchAgent:
         final = await self._llm.acomplete(messages, temperature=settings.llm.work_temperature)
         _merge_usage(total_usage, final.usage)
         self.last_usage = total_usage
+        await log_event("progress", "Finished initial research — drafting candidate research plans…")
         return self._parse_context(final.content or "", calls_made)
 
     def _parse_context(self, raw: str, calls_used: int) -> ResearchContext:

@@ -11,6 +11,7 @@ Dependency rules:
   - MUST NOT import from core/graph.py
   - MUST NOT call retrieval/ or memory/ directly (graph.py handles ChromaDB writes)
 """
+import asyncio
 import concurrent.futures
 import json
 import logging
@@ -19,11 +20,14 @@ from abc import ABC
 from crewai import Agent, Crew, LLM, Task
 from pydantic import ValidationError
 
+import models.crewai_patches  # noqa: F401 — must run before any Agent/Crew/Task is built
 from config import settings
 from core.event_logger import log_event, set_run_context
+from core.friendly_names import friendly_domain, friendly_tool
 from core.schemas import ChapterDraft
 from core.tool_router import async_route
 from models.llm_client import LLMClient
+from models.llm_retry import call_with_backoff, crew_semaphore
 from models.usage import crew_usage, llm_usage, merge_usage
 from prompts.domain_agent_prompt import DOMAIN_TASK_TEMPLATE, TOOL_REPAIR_TEMPLATE
 
@@ -86,18 +90,35 @@ class BaseDomainAgent(ABC):
                 text=f"No tool calls assigned to {self.DOMAIN} in plan {plan_id}.",
             )
 
-        # Execute tool calls sequentially, collect raw results. Each attempted call
-        # is one external API request counted toward the run's api_call_count.
-        raw_results: list[dict] = []
-        tool_errors: list[str] = []
-        repair_usages: list[dict] = []
-        tool_calls_made = 0
-        for tc in domain_calls:
+        await log_event(
+            "progress",
+            f"Collecting {friendly_domain(self.DOMAIN)} data from {len(domain_calls)} source(s)…",
+        )
+
+        # Execute tool calls concurrently (bounded by max_parallel_tool_calls), collect
+        # raw results. Each attempted call is one external API request counted toward
+        # the run's api_call_count.
+        sem = asyncio.Semaphore(settings.react.max_parallel_tool_calls)
+
+        async def _run_one(tc: dict) -> tuple[str, dict | None, list[dict], str | None]:
             tool_name = tc.get("tool", "")
             # PlannedToolCall uses "params"; CandidatePlan tool_calls use "arguments".
             arguments = tc.get("params") or tc.get("arguments") or {}
-            tool_calls_made += 1
-            result, usages, error = await self._call_tool_with_repair(tool_name, arguments)
+            await log_event(
+                "progress",
+                f"Fetching {friendly_tool(tool_name)} for {friendly_domain(self.DOMAIN)}…",
+            )
+            async with sem:
+                result, usages, error = await self._call_tool_with_repair(tool_name, arguments)
+            return tool_name, result, usages, error
+
+        outcomes = await asyncio.gather(*(_run_one(tc) for tc in domain_calls))
+
+        raw_results: list[dict] = []
+        tool_errors: list[str] = []
+        repair_usages: list[dict] = []
+        tool_calls_made = len(domain_calls)
+        for tool_name, result, usages, error in outcomes:
             repair_usages.extend(usages)
             if result is not None:
                 raw_results.append({"tool": tool_name, "result": result})
@@ -117,6 +138,7 @@ class BaseDomainAgent(ABC):
                 "domain_agent %s: CrewAI failed (%s), using fallback", self.DOMAIN, exc
             )
             draft = self._fallback(plan_id, raw_results)
+            tool_errors.append(f"{self.DOMAIN}/synthesis: {exc}")
 
         draft.tool_errors = tool_errors
         draft.datasets = self._to_datasets(raw_results)
@@ -139,9 +161,10 @@ class BaseDomainAgent(ABC):
 
         current_args = dict(arguments)
         for _ in range(settings.react.tool_repair_max_attempts):
+            friendly = friendly_tool(tool_name)
             await log_event(
-                "tool_repair",
-                f"{self.DOMAIN}/{tool_name}: interpreting error",
+                "progress",
+                f"That didn't work for {friendly} — retrying…",
                 detail={"error": last_error, "args": current_args},
             )
             decision, usage = await self._repair_decision(tool_name, current_args, last_error)
@@ -156,8 +179,8 @@ class BaseDomainAgent(ABC):
             try:
                 result = await async_route(tool_name, current_args)
                 await log_event(
-                    "tool_repair",
-                    f"{self.DOMAIN}/{tool_name}: adapted call succeeded",
+                    "progress",
+                    f"Retry succeeded for {friendly}.",
                     detail={"args": current_args, "reason": decision.get("reason", "")},
                 )
                 return result, repair_usages, None
@@ -213,8 +236,13 @@ class BaseDomainAgent(ABC):
             agent=agent,
         )
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            result = pool.submit(crew.kickoff).result()
+
+        def _run_crew() -> object:
+            with crew_semaphore:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    return pool.submit(crew.kickoff).result()
+
+        result = call_with_backoff(_run_crew)
         draft = self._parse_result(str(result), plan_id)
         draft.usage = merge_usage(draft.usage, crew_usage(result))
         return draft

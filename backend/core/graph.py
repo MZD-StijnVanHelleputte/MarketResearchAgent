@@ -41,6 +41,7 @@ from models.llm_client import LLMClient
 from models.usage import accumulate, llm_usage, merge_usage
 from prompts.synthesize_prompt import exec_summary_messages
 from core.event_logger import log_event
+from core.friendly_names import friendly_domain
 from core.tot.proposer import PlanProposer
 from core.tot.scorer import score_and_prune
 from core.tot.schemas import ResearchContext
@@ -53,6 +54,8 @@ from memory.sqlite_store import SqliteStore
 from core.merger import merge_chapter_sets, chapter_set_overlap
 from core.schemas import ChapterDraft, MergedChapter
 from core.subdomains import enumerate_subdomains, assemble_entity_evidence
+from core import completeness
+from core.tool_router import async_route
 from services.masterdata_service import MasterDataService
 from agents.synthesis_agent import SynthesisAgent
 from retrieval import Retriever
@@ -321,10 +324,16 @@ async def understand_node(state: AgentState) -> dict:
                 len(research_context.tickers),
                 len(research_context.commodities),
             )
+            await log_event(
+                "progress",
+                f"Found {len(research_context.companies)} relevant companies and "
+                f"{len(research_context.commodities)} commodities to investigate.",
+            )
         except Exception as exc:
             logger.warning("understand_node: ResearchAgent failed (%s) — proceeding without research", exc)
 
     # 3. Propose 7 depth-1 plans (enriched with research_context)
+    await log_event("progress", "Drafting candidate research plans…")
     try:
         proposer = PlanProposer()
         candidates = await proposer.propose(query, rag_chunks, research_context)
@@ -338,6 +347,7 @@ async def understand_node(state: AgentState) -> dict:
         return {"stage": "error", "error": f"PlanProposer failed: {exc}"}
 
     # 4. Ground to depth-2 via CrewAI critic
+    await log_event("progress", "Reviewing and refining the research plans…")
     grounder_usage: dict = {}
     try:
         grounder = GroundingAgent()
@@ -359,6 +369,7 @@ async def understand_node(state: AgentState) -> dict:
         write_plan_direct(plan)
 
     # 7. Merge survivors into one consolidated plan
+    await log_event("progress", "Selecting the strongest research plan…")
     merger_usage: dict = {}
     try:
         merger = PlanMerger()
@@ -633,6 +644,98 @@ async def partial_brief_node(state: AgentState) -> dict:
     }
 
 
+async def _remediate_subchapters(
+    mc: MergedChapter,
+    subdomains: list,
+    subchapters: list[dict],
+    synth_agent: SynthesisAgent,
+    query: str,
+    retriever,
+    collection: str,
+    guardrails,
+    all_warnings: list[str],
+) -> list[dict]:
+    """Completeness gate: bounded remediation for Tier-1 subchapters that fell
+    back to a generic placeholder.
+
+    Two cases, both handled here: (1) evidence existed but the CrewAI call
+    failed (likely a transient rate-limit, now mitigated by the retry/backoff
+    in synthesis_agent.py, so a single resynthesis attempt usually fixes it),
+    and (2) there was no evidence at all, in which case one extra broadened
+    web_search is tried before resynthesizing. Either way this runs at most
+    `settings.synthesis.completeness_max_remediation_rounds` times per
+    subchapter, then replaces any still-broken text with an honest message.
+    """
+    by_key = {s.key: s for s in subdomains}
+    rounds = max(1, settings.synthesis.completeness_max_remediation_rounds)
+    fixed: list[dict] = []
+
+    for sc in subchapters:
+        if not completeness.is_gap(sc):
+            fixed.append(sc)
+            continue
+
+        label = sc.get("subdomain_label", sc.get("subdomain_key", ""))
+        sub = by_key.get(sc.get("subdomain_key", ""))
+        had_evidence = completeness.has_evidence(sc)
+
+        for _ in range(rounds):
+            figures = sc.get("figures") or {}
+            datasets = sc.get("datasets") or []
+            citations = sc.get("citations") or []
+            chunks: list = []
+
+            if sub is not None:
+                evidence = assemble_entity_evidence(
+                    sub, mc, retriever, collection, guardrails, query
+                )
+                figures = {**evidence.figures, **figures}
+                datasets = datasets or evidence.datasets
+                citations = list(dict.fromkeys(citations + evidence.citations))
+                chunks = evidence.retrieved_chunks
+
+                if not had_evidence:
+                    try:
+                        result = await async_route(
+                            "web_search",
+                            {"query": completeness.broadened_query(label, query), "max_results": 5},
+                        )
+                        items = [
+                            {"title": r.get("title", ""), "url": r.get("url"),
+                             "snippet": r.get("content", "")}
+                            for r in (result.get("results") or [])[:5]
+                        ]
+                        if items:
+                            datasets = datasets + [{
+                                "tool": "web_search", "title": f"{len(items)} result(s)",
+                                "kind": "list", "items": items,
+                            }]
+                            citations = list(dict.fromkeys(
+                                citations + [i["url"] for i in items if i.get("url")]
+                            ))
+                    except Exception as exc:
+                        all_warnings.append(
+                            f"completeness_gate: {label} remediation search failed: {exc}"
+                        )
+
+            sc = await asyncio.to_thread(
+                synth_agent.run_subchapter,
+                mc.domain, sc.get("subdomain_key", ""), label,
+                figures, datasets, citations, chunks, query,
+            )
+            if not completeness.is_gap(sc):
+                all_warnings.append(f"completeness_gate: resynthesized {label} after initial gap")
+                break
+        else:
+            all_warnings.append(f"completeness_gate: {label} still incomplete after remediation")
+            err = sc.get("synthesis_error")
+            sc["text"] = completeness.honest_fallback_message(label, [err] if err else None)
+
+        fixed.append(sc)
+
+    return fixed
+
+
 async def synthesize_node(state: AgentState) -> dict:
     try:
         _timeout_interrupt_if_needed(state)
@@ -742,6 +845,7 @@ async def synthesize_node(state: AgentState) -> dict:
     chapters: list[dict] = []
 
     for mc in merged_chapters:
+        await log_event("progress", f"Writing the {friendly_domain(mc.domain)} chapter…")
         sub_question = f"{mc.domain} signals relevant to: {query}"
         try:
             raw_retrieved, stale = retriever.retrieve(
@@ -781,6 +885,7 @@ async def synthesize_node(state: AgentState) -> dict:
                     sub, mc, retriever, collection, _guardrails, query
                 )
                 all_injection_flags.extend(evidence.injection_flags)
+                await log_event("progress", f"Analyzing {sub.label} for {friendly_domain(mc.domain)}…")
                 async with sem:
                     return await asyncio.to_thread(
                         synth_agent.run_subchapter,
@@ -796,12 +901,20 @@ async def synthesize_node(state: AgentState) -> dict:
 
             subchapters = await asyncio.gather(*[_synth_one(s) for s in subdomains])
             subchapters = list(subchapters)
+
+            if settings.synthesis.completeness_gate_enabled:
+                subchapters = await _remediate_subchapters(
+                    mc, subdomains, subchapters, synth_agent, query,
+                    retriever, collection, _guardrails, all_warnings,
+                )
+
             for sc in subchapters:
                 usage_dicts.append(sc.get("usage", {}))
 
             # --- Tier 2: roll the entity analyses up into the domain chapter ---
             rollup = synth_agent.run_rollup(mc.domain, mc, subchapters, query)
             usage_dicts.append(rollup.get("usage", {}))
+            await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
             chapters.append({
                 "domain": mc.domain,
                 "text": rollup["text"],
@@ -819,7 +932,25 @@ async def synthesize_node(state: AgentState) -> dict:
             usage_dicts.append(result.get("usage", {}))
             result["datasets"] = mc.datasets
             result["subchapters"] = []
+
+            if settings.synthesis.completeness_gate_enabled and completeness.is_fallback_text(
+                result.get("text", "")
+            ):
+                # One resynthesis retry (benefits from synthesis_agent's retry/backoff);
+                # if it's still a placeholder, replace it with an honest message.
+                retry = synth_agent.run(mc.domain, mc, clean_retrieved, [], query)
+                usage_dicts.append(retry.get("usage", {}))
+                if not completeness.is_fallback_text(retry.get("text", "")):
+                    retry["datasets"] = mc.datasets
+                    retry["subchapters"] = []
+                    result = retry
+                    all_warnings.append(f"completeness_gate: resynthesized {mc.domain} after initial gap")
+                else:
+                    result["text"] = completeness.honest_fallback_message(mc.domain)
+                    all_warnings.append(f"completeness_gate: {mc.domain} still incomplete after remediation")
+
             chapters.append(result)
+            await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
 
     # If all synthesis agents failed, fall back to raw merged chapter text so we always
     # produce a non-empty brief rather than an empty document.
@@ -838,6 +969,7 @@ async def synthesize_node(state: AgentState) -> dict:
     # ------------------------------------------------------------------
     exec_summary = ""
     if chapters:
+        await log_event("progress", "Writing the executive summary…")
         chapter_texts = "\n\n".join(
             f"## {ch['domain'].replace('_', ' ').title()}\n{ch['text']}"
             for ch in chapters
@@ -942,6 +1074,8 @@ def understand_router(state: AgentState) -> str:
 
 
 def synthesize_router(state: AgentState) -> str:
+    if state.get("stage") == "partial":
+        return "partial_brief"   # soft-timeout stop mid-synthesis → real partial report
     if state.get("stage") == "synthesize":
         return "synthesize"   # gate 3 redirect self-loop
     return END
@@ -1000,7 +1134,7 @@ _graph.add_conditional_edges(
 _graph.add_conditional_edges(
     "synthesize",
     synthesize_router,
-    {"synthesize": "synthesize", END: END},
+    {"synthesize": "synthesize", "partial_brief": "partial_brief", END: END},
 )
 _graph.add_edge("partial_brief", END)
 

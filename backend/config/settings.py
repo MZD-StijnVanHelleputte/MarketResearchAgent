@@ -23,6 +23,11 @@ class LLMSettings(BaseSettings):
     # Per-call HTTP read timeout for the Mistral API (httpx default is 60 s, which is
     # too short for PlanProposer generating 7 plans at high temperature + 4096 tokens).
     llm_timeout_s: int = 300
+    # Process-wide cap on concurrent CrewAI kickoff() calls against this API key.
+    # Per-domain semaphores (synthesis.max_parallel_subdomains) only bound
+    # concurrency within one domain; with 7 domains running in parallel that can
+    # still mean dozens of simultaneous requests without this global cap.
+    max_concurrent_calls: int = 4
 
 
 class ToTSettings(BaseSettings):
@@ -44,7 +49,9 @@ class ReActSettings(BaseSettings):
     soft_timeout_s: int = 300       # 5-min soft timeout → prompts user to continue
     per_tool_latency_budget_s: int = 10
     run_token_budget: int = 200_000
-    tool_repair_max_attempts: int = 2  # LLM-adapted retries per failed tool call
+    # 1 initial attempt + 4 LLM-adapted repair retries = 5 total attempts per tool call
+    tool_repair_max_attempts: int = 4
+    max_parallel_tool_calls: int = 3  # concurrency cap for tool-execution loops
 
 
 class RetrievalSettings(BaseSettings):
@@ -131,6 +138,12 @@ class SynthesisSettings(BaseSettings):
     theme_extraction_min_evidence_words: int = 300
     theme_extraction_max_evidence_chars: int = 6000
     theme_extraction_temperature: float = 0.0
+    # Pre-finalization completeness gate: scan synthesized chapters/subchapters
+    # for fallback placeholders (e.g. "Limited evidence collected for X") or
+    # empty evidence, and attempt one bounded remediation pass before the
+    # report is assembled. See core/completeness.py.
+    completeness_gate_enabled: bool = True
+    completeness_max_remediation_rounds: int = 1
 
 
 class SafetySettings(BaseSettings):

@@ -15,6 +15,19 @@ from retrieval.chroma_store import Document
 class Chunker:
     """Word-approximate chunker.  chunk_size and chunk_overlap are in words (~tokens)."""
 
+    # Hard ceiling on UTF-8 bytes per chunk, independent of word count.  Every
+    # byte-level BPE tokenizer (OpenAI's tiktoken families, Mistral's Tekken)
+    # can never produce more tokens than input bytes, since the base
+    # vocabulary is the 256 raw bytes and merges only combine bytes into
+    # fewer tokens, never split one byte into several. So capping byte
+    # length below the embedding model's 8192-token limit is a hard
+    # guarantee against the API's "exceeding max tokens" error, regardless
+    # of how densely any given tokenizer's vocab happens to encode the
+    # content (estimating via a different vendor's tokenizer proved
+    # unreliable: it undercounted real Mistral tokens by ~2x for dense
+    # numeric/symbolic PDF-extracted text).
+    _MAX_BYTES = 7800
+
     def __init__(self, chunk_size: int = 600, chunk_overlap: int = 100) -> None:
         self._size = chunk_size
         self._overlap = chunk_overlap
@@ -33,7 +46,8 @@ class Chunker:
         while start < len(words):
             end = min(start + self._size, len(words))
             chunk_text = " ".join(words[start:end])
-            chunks.append(self._make(chunk_text, source, domain))
+            for piece in self._cap_length(chunk_text):
+                chunks.append(self._make(piece, source, domain))
             if end == len(words):
                 break
             start = end - self._overlap
@@ -74,6 +88,17 @@ class Chunker:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @classmethod
+    def _cap_length(cls, text: str) -> list[str]:
+        """Hard-slices text into pieces no longer than _MAX_BYTES UTF-8 bytes."""
+        data = text.encode("utf-8")
+        if len(data) <= cls._MAX_BYTES:
+            return [text]
+        return [
+            data[i : i + cls._MAX_BYTES].decode("utf-8", errors="ignore")
+            for i in range(0, len(data), cls._MAX_BYTES)
+        ]
 
     @staticmethod
     def _make(text: str, source: str, domain: str) -> Document:

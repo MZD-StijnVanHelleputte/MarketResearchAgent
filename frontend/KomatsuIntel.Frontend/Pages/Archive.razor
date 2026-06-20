@@ -1,5 +1,6 @@
 @page "/archive"
 @inject ApiClient Api
+@inject ISnackbar Snackbar
 @using Microsoft.AspNetCore.Components.Forms
 
 <PageTitle>Archive — Komatsu Market Intelligence</PageTitle>
@@ -331,6 +332,7 @@
                             : "Embedding…", Color.Info),
         "done"       => ($"Done — {item.ChunksAdded} chunk(s)", Color.Success),
         "error"      => ("Error", Color.Error),
+        "cancelled"  => ("Cancelled (file deleted)", Color.Default),
         _            => (item.Stage, Color.Default),
     };
 
@@ -401,7 +403,7 @@
             item.Error          = status.Error;
             StateHasChanged();
 
-            if (status.Stage is "done" or "error") break;
+            if (status.Stage is "done" or "error" or "cancelled") break;
         }
 
         if (item.Stage == "done")
@@ -409,7 +411,7 @@
     }
 
     private void ClearFinishedUploads()
-        => _uploadItems = _uploadItems.Where(i => i.Stage is not "done" and not "error").ToList();
+        => _uploadItems = _uploadItems.Where(i => i.Stage is not "done" and not "error" and not "cancelled").ToList();
 
     private async Task DeleteDocument(string source)
     {
@@ -419,7 +421,10 @@
             await Api.DeleteKnowledgeAsync(source);
             await LoadKnowledge();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not delete '{source}': {ex.Message}", Severity.Error);
+        }
         finally { _deleting = false; }
     }
 

@@ -142,13 +142,18 @@ class ChromaStore:
         return list(sources.values())
 
     def delete_by_source(self, collection: str, source: str) -> int:
-        """Delete all chunks whose metadata.source == source. Returns deleted count."""
+        """Delete all chunks whose metadata.source == source. Returns deleted count.
+
+        Returns 0 only if the collection doesn't exist yet (nothing to delete);
+        any other failure propagates so the caller doesn't silently report
+        success on a delete that didn't actually happen.
+        """
         try:
             col = self._client.get_collection(name=collection)
-            result = col.get(where={"source": source}, include=[])
-            ids = result["ids"]
-            if ids:
-                col.delete(ids=ids)
-            return len(ids)
         except Exception:
             return 0
+        result = col.get(where={"source": source}, include=[])
+        ids = result["ids"]
+        if ids:
+            col.delete(ids=ids)
+        return len(ids)

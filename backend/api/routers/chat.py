@@ -94,7 +94,7 @@ async def stream_chat(body: ChatRequest):
     raise NotImplementedError
 
 
-async def _persist_stream_event(event, run_id, session_id, query, store, activity) -> None:
+async def _persist_stream_event(event, run_id, session_id, query, store) -> None:
     """Handle one astream event: update the status message on node start and the
     live cost/token counter on node completion."""
     etype = event["event"]
@@ -104,13 +104,11 @@ async def _persist_stream_event(event, run_id, session_id, query, store, activit
         node = node.split(":")[-1] if ":" in node else node
         msg = _NODE_MESSAGES.get(node)
         if msg:
-            activity.append(msg)
-            await log_event("node_start", node, stage=node)
+            await log_event("progress", msg, stage=node)
             await store.upsert_run(
                 run_id, session_id, query,
                 status="running", stage=node,
                 status_message=msg,
-                activity_log=list(activity),
             )
     elif etype == "on_chain_end":
         output = event.get("data", {}).get("output")
@@ -245,6 +243,24 @@ async def _handle_graph_result(
 
     brief = _assemble_brief(final.get("synthesis_chapters", []))
 
+    # Defensive backstop: a run can reach here with no exception raised yet still
+    # have produced nothing (e.g. a redirect/timeout self-loop that exits before
+    # synthesis finishes). Reporting status="done" in that case is misleading —
+    # the frontend trusts "done" and then 404s fetching a PDF that was never
+    # generated. Surface it as an honest, actionable error instead.
+    if not (final.get("synthesis_chapters") or final.get("exec_summary") or brief):
+        await store.upsert_run(
+            run_id, session_id, query,
+            status="error",
+            stage=final_stage,
+            error=(
+                "The run ended without producing a report — it may have been "
+                "stopped or redirected before synthesis completed. Please retry."
+            ),
+            warnings=final.get("warnings", []),
+        )
+        return True
+
     await store.upsert_run(
         run_id, session_id, query,
         status="done",
@@ -292,12 +308,11 @@ async def _run_graph(
 ) -> None:
     config = {"configurable": {"thread_id": run_id}}
     store = SqliteStore()
-    activity: list[str] = []
     set_run_context(run_id, stage="understand")
 
     async def _stream() -> None:
         async for event in graph_module.compiled.astream_events(initial_state, config, version="v2"):
-            await _persist_stream_event(event, run_id, session_id, query, store, activity)
+            await _persist_stream_event(event, run_id, session_id, query, store)
 
     try:
         await asyncio.wait_for(_stream(), timeout=settings.react.hard_time_limit_s)
@@ -326,10 +341,7 @@ async def _resume_graph(
     """Resume a graph that is suspended at a gate interrupt."""
     config = {"configurable": {"thread_id": run_id}}
     store = SqliteStore()
-    # Seed activity from whatever was persisted so far so the log accumulates
-    # across all gate resume calls rather than resetting to [] each time.
     existing_row = await store.get_run(run_id)
-    activity: list[str] = list(existing_row.get("activity_log") or []) if existing_row else []
     set_run_context(run_id)
 
     # Exclude the time spent waiting for this decision from the soft-timeout clock.
@@ -342,7 +354,7 @@ async def _resume_graph(
 
     async def _stream() -> None:
         async for event in graph_module.compiled.astream_events(Command(resume=decision), config, version="v2"):
-            await _persist_stream_event(event, run_id, session_id, query, store, activity)
+            await _persist_stream_event(event, run_id, session_id, query, store)
 
     try:
         await asyncio.wait_for(_stream(), timeout=settings.react.hard_time_limit_s)

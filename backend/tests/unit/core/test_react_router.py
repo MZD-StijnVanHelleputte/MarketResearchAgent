@@ -1,4 +1,5 @@
-from core.graph import react_router, data_review_router, AgentState
+from core.graph import react_router, data_review_router, synthesize_router, AgentState
+from core.graph import END
 from config import settings
 
 
@@ -58,3 +59,19 @@ def test_data_review_router_redirect_loops_back_to_collect():
 
 def test_data_review_router_approve_proceeds_to_synthesize():
     assert data_review_router(_state(confidence=1.0, react_iterations=0, stage="synthesize")) == "synthesize"
+
+
+# synthesize_router: a soft-timeout "stop" mid-synthesis must route to
+# partial_brief (a real report from chapter_sets), not fall through to END
+# with nothing — see core/graph.py synthesize_node's _TimeoutStopSignal handler.
+
+def test_synthesize_router_partial_stage_routes_to_partial_brief():
+    assert synthesize_router(_state(confidence=0.0, react_iterations=0, stage="partial")) == "partial_brief"
+
+
+def test_synthesize_router_synthesize_stage_self_loops():
+    assert synthesize_router(_state(confidence=0.0, react_iterations=0, stage="synthesize")) == "synthesize"
+
+
+def test_synthesize_router_done_stage_routes_to_end():
+    assert synthesize_router(_state(confidence=0.0, react_iterations=0, stage="done")) == END

@@ -152,7 +152,7 @@ def _mock_synth_hierarchical():
         "text": f"Leaf analysis for {label}.",
         "usage": {},
     }
-    m.run_rollup.side_effect = lambda domain, mc, subchapters: {
+    m.run_rollup.side_effect = lambda domain, mc, subchapters, *a, **kw: {
         "domain": domain,
         "text": "Domain rollup across entities.",
         "usage": {},

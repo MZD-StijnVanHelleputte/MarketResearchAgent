@@ -203,8 +203,11 @@ class SqliteStore:
         for field in ("warnings", "injection_flags", "merge_log", "plans"):
             raw = result.get(field)
             result[field] = json.loads(raw) if raw else []
-        raw_activity = result.get("activity_log")
-        result["activity_log"] = json.loads(raw_activity) if raw_activity else []
+        # The live activity feed shown in chat is built from step_events
+        # (granular, business-friendly progress messages), not the legacy
+        # activity_log column (which only ever held 5 static stage strings).
+        events = await self.get_step_events(run_id, limit=200)
+        result["activity_log"] = [e["label"] for e in events if e["event_type"] == "progress"]
         return result
 
     async def list_runs(self, limit: int = 100) -> list[dict]:

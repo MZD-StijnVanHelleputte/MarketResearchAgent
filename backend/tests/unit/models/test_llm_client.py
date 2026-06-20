@@ -276,3 +276,53 @@ def test_embed_batch_splits_into_multiple_requests():
 
     assert mock_mistral.embeddings.create.call_count == 2
     assert len(result) == 3
+
+
+def test_embed_batch_splits_on_cumulative_byte_budget():
+    """Dense chunks near the per-chunk byte cap must not be packed 64-at-a-time —
+    their summed bytes can exceed Mistral's per-request token budget even though
+    each individual chunk and the item count are within limits."""
+    from models import llm_client as llm_client_module
+
+    big_text = "x" * 7700  # near Chunker._MAX_BYTES / _MAX_EMBED_BYTES (7800)
+    texts = [big_text] * 30  # 30 * 7700 = 231,000 bytes, far over _MAX_BATCH_BYTES
+
+    mock_mistral = MagicMock()
+    mock_mistral.embeddings.create.side_effect = lambda model, inputs: _make_embedding_response(
+        len(inputs)
+    )
+
+    client = LLMClient()
+    client._mistral = mock_mistral
+
+    progress_calls = []
+    result = client.embed_batch(
+        texts, batch_size=64, on_progress=lambda done, total: progress_calls.append((done, total))
+    )
+
+    assert len(result) == 30
+    assert mock_mistral.embeddings.create.call_count > 1
+    for _, kwargs in mock_mistral.embeddings.create.call_args_list:
+        batch = kwargs["inputs"]
+        assert sum(len(t.encode("utf-8")) for t in batch) <= llm_client_module._MAX_BATCH_BYTES
+        assert len(batch) <= 64
+    assert progress_calls[-1] == (30, 30)
+
+
+def test_embed_batch_respects_both_count_and_byte_limits():
+    """Small texts well under the byte budget should still respect batch_size."""
+    mock_mistral = MagicMock()
+    mock_mistral.embeddings.create.side_effect = lambda model, inputs: _make_embedding_response(
+        len(inputs)
+    )
+
+    client = LLMClient()
+    client._mistral = mock_mistral
+
+    texts = ["short"] * 10
+    result = client.embed_batch(texts, batch_size=3)
+
+    assert len(result) == 10
+    assert mock_mistral.embeddings.create.call_count == 4  # ceil(10/3)
+    for _, kwargs in mock_mistral.embeddings.create.call_args_list[:-1]:
+        assert len(kwargs["inputs"]) == 3

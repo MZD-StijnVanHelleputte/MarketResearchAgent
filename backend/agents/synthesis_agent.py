@@ -14,8 +14,10 @@ import logging
 
 from crewai import Agent, Crew, LLM, Task
 
+import models.crewai_patches  # noqa: F401 — must run before any Agent/Crew/Task is built
 from config import settings
 from core.schemas import MergedChapter
+from models.llm_retry import call_with_backoff, crew_semaphore
 from models.usage import crew_usage
 from prompts.domain_agent_prompt import SYNTHESIS_TASK_TEMPLATE
 from prompts.synthesize_prompt import DOMAIN_ROLLUP_TEMPLATE, SUBDOMAIN_SYNTHESIS_TEMPLATE
@@ -82,6 +84,7 @@ class SynthesisAgent:
             min_words=settings.synthesis.subdomain_min_words,
             max_words=settings.synthesis.subdomain_max_words,
         )
+        synthesis_error: str | None = None
         try:
             text, usage = self._kickoff(
                 prompt,
@@ -91,6 +94,7 @@ class SynthesisAgent:
             )
             text = self._append_figures(text, figures)
         except Exception as exc:
+            synthesis_error = str(exc)
             logger.warning(
                 "synthesis_agent %s/%s: subchapter CrewAI failed (%s), using fallback",
                 domain, subdomain_key, exc,
@@ -108,6 +112,10 @@ class SynthesisAgent:
             "citations": list(citations),
             "datasets": list(datasets),
             "usage": usage,
+            # Real failure reason, if synthesis fell back to a placeholder — surfaced
+            # by the completeness gate so it reaches the report's warnings appendix
+            # instead of only being logged to stdout.
+            "synthesis_error": synthesis_error,
         }
 
     def run_rollup(
@@ -129,6 +137,7 @@ class SynthesisAgent:
             min_words=settings.synthesis.rollup_min_words,
             max_words=settings.synthesis.rollup_max_words,
         )
+        rollup_error: str | None = None
         try:
             text, usage = self._kickoff(
                 prompt,
@@ -138,13 +147,17 @@ class SynthesisAgent:
             )
             text = self._append_figures(text, merged_chapter.figures)
         except Exception as exc:
+            rollup_error = str(exc)
             logger.warning(
                 "synthesis_agent %s: rollup CrewAI failed (%s), using fallback", domain, exc
             )
             # Concatenate the leaf analyses so the chapter is never empty.
             text = self._append_figures(subchapters_text, merged_chapter.figures)
             usage = {}
-        return {"domain": domain, "text": text, "figures": dict(merged_chapter.figures), "usage": usage}
+        return {
+            "domain": domain, "text": text, "figures": dict(merged_chapter.figures),
+            "usage": usage, "synthesis_error": rollup_error,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -201,8 +214,13 @@ class SynthesisAgent:
         )
         task = Task(description=prompt, expected_output=expected_output, agent=agent)
         crew = Crew(agents=[agent], tasks=[task], verbose=False)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            crew_result = pool.submit(crew.kickoff).result()
+
+        def _run_crew() -> object:
+            with crew_semaphore:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    return pool.submit(crew.kickoff).result()
+
+        crew_result = call_with_backoff(_run_crew)
         usage = crew_usage(crew_result)
         result = str(crew_result).strip()
 

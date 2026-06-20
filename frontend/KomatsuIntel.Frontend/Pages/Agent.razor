@@ -634,8 +634,25 @@
 
     // ── Polling ─────────────────────────────────────────────────────────────
 
+    private static readonly string[] _fillerThoughts =
+    {
+        "Digging for answers…",
+        "Moving some data…",
+        "Crunching the numbers…",
+        "Surveying the terrain…",
+        "Sifting through the data pile…",
+        "Consulting the field reports…",
+        "Tightening a few bolts on the analysis…",
+        "Thinking…",
+    };
+
     private async Task PollUntilComplete(CancellationToken ct)
     {
+        string? lastRealThought = null;
+        int staleTicks = 0;
+        int fillerIndex = -1;
+        const int StaleThreshold = 2; // ticks (~4s at 2s/poll) before swapping to filler
+
         while (!ct.IsCancellationRequested)
         {
             await Task.Delay(2000, ct);
@@ -658,11 +675,29 @@
                 _            => _currentStage,
             };
 
-            // Update animated thought from latest activity log entry
+            // Update animated thought from latest activity log entry; fall back to
+            // rotating filler text if the backend hasn't reported new progress in a while.
+            var latest = run.ActivityLog is { Count: > 0 } ? run.ActivityLog[^1] : null;
             if (run.ActivityLog is { Count: > 0 })
             {
                 _seenActivityCount = run.ActivityLog.Count;
-                _currentThought    = run.ActivityLog[^1];
+            }
+
+            if (latest != lastRealThought)
+            {
+                lastRealThought  = latest;
+                staleTicks       = 0;
+                fillerIndex      = -1;
+                _currentThought  = latest;
+            }
+            else
+            {
+                staleTicks++;
+                if (staleTicks >= StaleThreshold && staleTicks % StaleThreshold == 0)
+                {
+                    fillerIndex     = (fillerIndex + 1) % _fillerThoughts.Length;
+                    _currentThought = _fillerThoughts[fillerIndex];
+                }
             }
 
             // Hydrate sources incrementally (they become available at Gate 2)
