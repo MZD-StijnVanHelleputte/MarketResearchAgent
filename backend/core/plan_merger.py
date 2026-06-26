@@ -130,7 +130,9 @@ def _fallback_merge(
     )
 
     entity_manifest: dict = {
-        "companies": research_context.companies,
+        "competitors": research_context.competitors,
+        "operators": research_context.operators,
+        "demand_side_companies": research_context.demand_side_companies,
         "tickers": research_context.tickers,
         "commodities": research_context.commodities,
         "mine_sites": research_context.mine_sites,
@@ -217,21 +219,35 @@ class PlanMerger:
             planned_calls = _expand_per_ticker_calls(
                 planned_calls, {"tickers": research_context.tickers},
             )
-            return ConsolidatedPlan(
+            consolidated = ConsolidatedPlan(
                 **{k: v for k, v in data.items() if k in ConsolidatedPlan.model_fields},
                 planned_tool_calls=planned_calls,
             )
+            # The LLM may omit demand-side consumers from its manifest; carry them
+            # through from the authoritative research context so they aren't lost.
+            if research_context.demand_side_companies:
+                consolidated.entity_manifest.setdefault(
+                    "demand_side_companies", research_context.demand_side_companies
+                )
+            return consolidated
         except Exception as exc:
             logger.warning("PlanMerger: LLM merge failed (%s) — using fallback deterministic merge", exc)
             return _fallback_merge(sorted_survivors, research_context, run_id)
 
     @staticmethod
     def _format_research(ctx: ResearchContext) -> str:
-        if not any([ctx.companies, ctx.tickers, ctx.commodities, ctx.news_signals]):
+        if not any([ctx.competitors, ctx.operators, ctx.tickers, ctx.commodities, ctx.news_signals]):
             return "(no pre-planning research was conducted)"
         parts = []
-        if ctx.companies:
-            parts.append(f"Companies: {', '.join(ctx.companies)}")
+        if ctx.competitors:
+            parts.append(f"Competitors: {', '.join(ctx.competitors)}")
+        if ctx.operators:
+            parts.append(f"Mining operators: {', '.join(ctx.operators)}")
+        if ctx.demand_side_companies:
+            parts.append(
+                "Demand-side consumers (route to macro_geopolitics): "
+                + ", ".join(ctx.demand_side_companies)
+            )
         if ctx.tickers:
             parts.append(f"Tickers: {', '.join(ctx.tickers)}")
         if ctx.commodities:

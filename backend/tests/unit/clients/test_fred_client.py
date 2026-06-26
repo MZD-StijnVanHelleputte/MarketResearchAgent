@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch
-from clients.fred_client import FredClient
+from clients.fred_client import FredClient, get_fred_client
 
 
 @pytest.mark.asyncio
@@ -48,3 +48,15 @@ async def test_get_series_info_sends_correct_params():
 async def test_auth_headers_returns_empty():
     client = FredClient()
     assert client._auth_headers() == {}
+
+
+def test_get_fred_client_is_shared_singleton():
+    """All FRED tools must share one client so the token-bucket rate limiter enforces
+    a single global 120/min budget instead of one bucket per tool."""
+    from services.fred_service import FredService
+    from services.macro_service import MacroService
+
+    shared = get_fred_client()
+    assert get_fred_client() is shared
+    assert FredService()._client is shared
+    assert MacroService()._client is shared

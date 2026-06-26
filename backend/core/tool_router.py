@@ -2,8 +2,25 @@
 import time
 
 from config import settings
-from core.event_logger import get_run_context, log_event
+from clients.base_http_client import PERMANENT_STATUSES
+from core.event_logger import get_run_context, log_event, record_live_source
 import tools.registry as registry
+
+
+def is_permanent_tool_error(exc: BaseException) -> bool:
+    """True if a tool failure (or any cause in its chain) is a permanent HTTP client
+    error — bad request / not found / unprocessable. Such errors can never succeed on
+    retry or via LLM argument-repair (e.g. FRED returns HTTP 400 'The series does not
+    exist' for an invalid series_id), so callers should fail fast instead of looping."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        status = getattr(cur, "status", None)
+        if isinstance(status, int) and status in PERMANENT_STATUSES:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
 
 
 def route(tool_name: str, tool_input: dict) -> dict:
@@ -26,6 +43,8 @@ async def async_route(tool_name: str, tool_input: dict) -> dict:
             "tool_call", f"{tool_name}{domain_tag}",
             detail={"args": tool_input, "result_key": first_key, "latency_ms": latency_ms},
         )
+        # Grow the Sources panel one source at a time as each tool returns.
+        await record_live_source(tool_name, tool_input, result=result)
         return result
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -34,6 +53,7 @@ async def async_route(tool_name: str, tool_input: dict) -> dict:
             detail={"args": tool_input, "error": str(exc), "latency_ms": latency_ms},
             level="error",
         )
+        await record_live_source(tool_name, tool_input, failed=True, reason=str(exc))
         raise
 
 

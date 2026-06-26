@@ -239,7 +239,7 @@ async def clarify_run(
         )
 
     # Persist entity answers to preferences
-    for key in ("equipment_models", "mine_sites", "competitor_tickers"):
+    for key in ("equipment_models", "operators", "competitor_tickers"):
         val = getattr(body, key)
         if val:
             await store.set_preference(key, val)

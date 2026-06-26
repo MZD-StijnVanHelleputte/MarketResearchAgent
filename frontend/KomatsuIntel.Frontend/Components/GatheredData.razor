@@ -1,4 +1,4 @@
-@* Gate 2 — review the actual data gathered per domain; download or approve *@
+@* Gate 2 — review the data gathered, grouped domain → entity → dataset *@
 @inject IJSRuntime JS
 
 <MudPaper Elevation="1" Class="pa-4">
@@ -16,8 +16,9 @@
         </MudStack>
 
         <MudText Typo="Typo.body2" Color="Color.Secondary">
-            Review the data gathered for each domain below. Download a dataset to inspect
-            the full contents, re-run a domain if something is missing, or approve to synthesize.
+            Each domain groups the data we collected by the company, commodity or theme it
+            describes. Expand a domain to see what was gathered, preview or download any
+            dataset, re-run a domain if something is missing, or approve to synthesize.
         </MudText>
 
         @if (Data.Domains.Count == 0)
@@ -25,123 +26,160 @@
             <MudAlert Severity="Severity.Info" Dense="true">No data was collected.</MudAlert>
         }
 
-        @foreach (var domain in Data.Domains)
-        {
-            <MudPaper Elevation="0" Class="pa-3"
-                      Style="border:1px solid #E5E7EB;border-radius:8px;">
-                <MudStack Spacing="2">
+        <MudExpansionPanels MultiExpansion="true" Elevation="0">
+            @foreach (var domain in Data.Domains)
+            {
+                <MudExpansionPanel Style="border:1px solid #E5E7EB;border-radius:8px;margin-bottom:8px;">
+                    <TitleContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween"
+                                  Style="width:100%;">
+                            <div>
+                                <MudText Typo="Typo.body1" Style="font-weight:700;">@Pretty(domain.Domain)</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@DomainSummary(domain)</MudText>
+                            </div>
+                            <MudTooltip Text="@($"Re-run {Pretty(domain.Domain)} collection")">
+                                <MudIconButton Icon="@Icons.Material.Filled.Replay"
+                                               Color="Color.Warning" Size="Size.Small"
+                                               OnClick="@(() => OnRedirect.InvokeAsync(domain.Domain))" />
+                            </MudTooltip>
+                        </MudStack>
+                    </TitleContent>
+                    <ChildContent>
 
-                    @* Domain header + re-run *@
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-                        <MudText Typo="Typo.body1" Style="font-weight:700;">@Pretty(domain.Domain)</MudText>
-                        <MudTooltip Text="@($"Re-run {Pretty(domain.Domain)} collection")">
-                            <MudIconButton Icon="@Icons.Material.Filled.Replay"
-                                           Color="Color.Warning" Size="Size.Small"
-                                           OnClick="@(() => OnRedirect.InvokeAsync(domain.Domain))" />
-                        </MudTooltip>
-                    </MudStack>
-
-                    @* Gap flags *@
-                    @if (domain.Errors is { Count: > 0 })
-                    {
-                        <MudAlert Severity="Severity.Warning" Dense="true">
-                            <MudText Typo="Typo.caption" Style="font-weight:600;">
-                                @domain.Errors.Count data gap(s):
-                            </MudText>
-                            @foreach (var err in domain.Errors)
-                            {
-                                <MudText Typo="Typo.caption" Style="display:block;">• @err</MudText>
-                            }
-                        </MudAlert>
-                    }
-
-                    @if (domain.Datasets is null || domain.Datasets.Count == 0)
-                    {
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">
-                            No datasets returned for this domain.
-                        </MudText>
-                    }
-
-                    @foreach (var ds in domain.Datasets ?? [])
-                    {
-                        <MudPaper Elevation="0" Class="pa-2"
-                                  Style="background:#F8F9FC;border-radius:6px;">
-                            <MudStack Spacing="1">
-                                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-                                    <MudStack Spacing="0">
-                                        <MudText Typo="Typo.body2" Style="font-weight:600;">@ds.Title</MudText>
-                                        <MudText Typo="Typo.caption" Color="Color.Secondary"
-                                                 Style="font-family:monospace;">@ds.Tool</MudText>
-                                    </MudStack>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
-                                               StartIcon="@Icons.Material.Filled.Download"
-                                               OnClick="@(() => Download(domain.Domain, ds))">
-                                        @(ds.Kind is "table" or "list" ? "CSV" : "JSON")
-                                    </MudButton>
-                                </MudStack>
-
-                                @if (ds.Kind == "table" && ds.Columns is { Count: > 0 })
+                        @* Attempted-but-failed tools, surfaced in red so nothing looks "forgotten" *@
+                        @if (domain.FailedTools is { Count: > 0 })
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">
+                                <MudText Typo="Typo.caption" Style="font-weight:600;">
+                                    Tried but couldn't collect:
+                                </MudText>
+                                @foreach (var ft in domain.FailedTools)
                                 {
-                                    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Striped="true"
-                                                    Style="overflow-x:auto;">
-                                        <thead>
-                                            <tr>@foreach (var c in ds.Columns) { <th>@c</th> }</tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach (var row in (ds.Rows ?? []).Take(PreviewRows))
-                                            {
-                                                <tr>@foreach (var cell in row) { <td>@cell</td> }</tr>
-                                            }
-                                        </tbody>
-                                    </MudSimpleTable>
-                                    @if (ds.RowCount > PreviewRows)
-                                    {
-                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                            Showing @PreviewRows of @ds.RowCount rows — download for the full dataset.
-                                        </MudText>
-                                    }
-                                }
-                                else if (ds.Kind == "list" && ds.Items is { Count: > 0 })
-                                {
-                                    @foreach (var item in ds.Items.Take(PreviewRows))
-                                    {
-                                        <MudStack Spacing="0" Class="mb-1">
-                                            @if (!string.IsNullOrWhiteSpace(item.Url))
-                                            {
-                                                <MudLink Href="@item.Url" Target="_blank" Typo="Typo.body2">
-                                                    @(string.IsNullOrWhiteSpace(item.Title) ? item.Url : item.Title)
-                                                </MudLink>
-                                            }
-                                            else
-                                            {
-                                                <MudText Typo="Typo.body2">@item.Title</MudText>
-                                            }
-                                            @if (!string.IsNullOrWhiteSpace(item.Snippet))
-                                            {
-                                                <MudText Typo="Typo.caption" Color="Color.Secondary">@item.Snippet</MudText>
-                                            }
-                                        </MudStack>
-                                    }
-                                    @if ((ds.Items?.Count ?? 0) > PreviewRows)
-                                    {
-                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                            Showing @PreviewRows of @ds.Items!.Count items — download for the full list.
-                                        </MudText>
-                                    }
-                                }
-                                else
-                                {
-                                    <MudText Typo="Typo.caption" Color="Color.Secondary"
-                                             Style="font-family:monospace;white-space:pre-wrap;word-break:break-word;">
-                                        @(string.IsNullOrWhiteSpace(ds.Summary) ? "(no preview)" : ds.Summary)
+                                    <MudText Typo="Typo.caption" Style="display:block;">
+                                        • @ft.ToolDisplay — @ft.Reason
                                     </MudText>
                                 }
-                            </MudStack>
-                        </MudPaper>
-                    }
-                </MudStack>
-            </MudPaper>
-        }
+                            </MudAlert>
+                        }
+
+                        @if (domain.Entities is null || domain.Entities.Count == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                No datasets returned for this domain.
+                            </MudText>
+                        }
+
+                        <MudExpansionPanels MultiExpansion="true" Elevation="0">
+                            @foreach (var entity in domain.Entities ?? [])
+                            {
+                                <MudExpansionPanel Style="background:#F8F9FC;border-radius:6px;margin-bottom:6px;">
+                                    <TitleContent>
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                            <MudText Typo="Typo.body2" Style="font-weight:600;">@entity.Label</MudText>
+                                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                @entity.Datasets.Count dataset@(entity.Datasets.Count == 1 ? "" : "s")
+                                            </MudText>
+                                        </MudStack>
+                                    </TitleContent>
+                                    <ChildContent>
+                                        @foreach (var ds in entity.Datasets)
+                                        {
+                                            <MudStack Spacing="1" Class="mb-2">
+                                                <MudStack Row="true" AlignItems="AlignItems.Center"
+                                                          Justify="Justify.SpaceBetween">
+                                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                                                 Color="@ChipColor(ds.DataType)">
+                                                            @DataTypeLabel(ds.DataType)
+                                                        </MudChip>
+                                                        <MudText Typo="Typo.body2" Style="font-weight:600;">
+                                                            @(string.IsNullOrWhiteSpace(ds.Label) ? ds.Title : ds.Label)
+                                                        </MudText>
+                                                        @if (CountLabel(ds) is { Length: > 0 } cl)
+                                                        {
+                                                            <MudText Typo="Typo.caption" Color="Color.Secondary">@cl</MudText>
+                                                        }
+                                                    </MudStack>
+                                                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                                               StartIcon="@Icons.Material.Filled.Download"
+                                                               OnClick="@(() => Download(domain.Domain, ds))">
+                                                        @(ds.Kind is "table" or "list" ? "CSV" : "JSON")
+                                                    </MudButton>
+                                                </MudStack>
+
+                                                @* Raw rows stay hidden until the user opens the preview *@
+                                                <MudExpansionPanels Elevation="0">
+                                                    <MudExpansionPanel Text="Preview" Dense="true"
+                                                                       Style="background:transparent;">
+                                                        @if (ds.Kind == "table" && ds.Columns is { Count: > 0 })
+                                                        {
+                                                            <MudSimpleTable Dense="true" Hover="true" Bordered="true"
+                                                                            Striped="true" Style="overflow-x:auto;">
+                                                                <thead>
+                                                                    <tr>@foreach (var c in ds.Columns) { <th>@c</th> }</tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    @foreach (var row in (ds.Rows ?? []).Take(PreviewRows))
+                                                                    {
+                                                                        <tr>@foreach (var cell in row) { <td>@cell</td> }</tr>
+                                                                    }
+                                                                </tbody>
+                                                            </MudSimpleTable>
+                                                            @if (ds.RowCount > PreviewRows)
+                                                            {
+                                                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                                    Showing @PreviewRows of @ds.RowCount rows — download for the full dataset.
+                                                                </MudText>
+                                                            }
+                                                        }
+                                                        else if (ds.Kind == "list" && ds.Items is { Count: > 0 })
+                                                        {
+                                                            @foreach (var item in ds.Items.Take(PreviewRows))
+                                                            {
+                                                                <MudStack Spacing="0" Class="mb-1">
+                                                                    @if (!string.IsNullOrWhiteSpace(item.Url))
+                                                                    {
+                                                                        <MudLink Href="@item.Url" Target="_blank" Typo="Typo.body2">
+                                                                            @(string.IsNullOrWhiteSpace(item.Title) ? item.Url : item.Title)
+                                                                        </MudLink>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <MudText Typo="Typo.body2">@item.Title</MudText>
+                                                                    }
+                                                                    @if (!string.IsNullOrWhiteSpace(item.Snippet))
+                                                                    {
+                                                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@item.Snippet</MudText>
+                                                                    }
+                                                                </MudStack>
+                                                            }
+                                                            @if ((ds.Items?.Count ?? 0) > PreviewRows)
+                                                            {
+                                                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                                    Showing @PreviewRows of @ds.Items!.Count items — download for the full list.
+                                                                </MudText>
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                                                     Style="font-family:monospace;white-space:pre-wrap;word-break:break-word;">
+                                                                @(string.IsNullOrWhiteSpace(ds.Summary) ? "(no preview)" : ds.Summary)
+                                                            </MudText>
+                                                        }
+                                                    </MudExpansionPanel>
+                                                </MudExpansionPanels>
+                                            </MudStack>
+                                        }
+                                    </ChildContent>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
 
         @* Actions *@
         <MudButton Variant="Variant.Filled"
@@ -162,10 +200,57 @@
 
     private const int PreviewRows = 25;
 
+    // ── Labels & summaries ─────────────────────────────────────────────────
     private static string Pretty(string domain) =>
         string.Join(' ', domain.Split('_').Select(w =>
             w.Length == 0 ? w : char.ToUpper(w[0]) + w[1..]));
 
+    private static string DomainSummary(DomainData d)
+    {
+        var datasets = (d.Entities ?? []).Sum(e => e.Datasets.Count);
+        var names = (d.Entities ?? [])
+            .Select(e => e.Label)
+            .Where(l => !string.Equals(l, "General", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var parts = new List<string>();
+        if (names.Count > 0) parts.Add(string.Join(", ", names));
+        parts.Add($"{datasets} dataset{(datasets == 1 ? "" : "s")}");
+        var gaps = d.FailedTools?.Count ?? 0;
+        if (gaps > 0) parts.Add($"{gaps} gap{(gaps == 1 ? "" : "s")}");
+        return string.Join(" · ", parts);
+    }
+
+    private static string DataTypeLabel(string? dt) => dt switch
+    {
+        "numeric_series" => "numeric series",
+        "financials"     => "financials",
+        "articles"       => "news",
+        "web_results"    => "web results",
+        "filings"        => "filings",
+        "document"       => "document",
+        _                => "data",
+    };
+
+    private static Color ChipColor(string? dt) => dt switch
+    {
+        "numeric_series" or "financials" => Color.Success,
+        "articles"    => Color.Warning,
+        "web_results" => Color.Info,
+        "filings"     => Color.Secondary,
+        _             => Color.Default,
+    };
+
+    private static string CountLabel(DomainDataset ds) => ds.DataType switch
+    {
+        _ when ds.Count <= 0 => "",
+        "numeric_series" or "financials" => $"{ds.Count} rows",
+        "articles"    => $"{ds.Count} articles",
+        "web_results" => $"{ds.Count} results",
+        "filings"     => $"{ds.Count} filings",
+        _             => $"{ds.Count}",
+    };
+
+    // ── Download (unchanged behaviour: full CSV/JSON) ──────────────────────
     private async Task Download(string domain, DomainDataset ds)
     {
         string content;

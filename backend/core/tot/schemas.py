@@ -31,7 +31,9 @@ class CandidatePlan(BaseModel):
 
 class ResearchContext(BaseModel):
     """Entities and signals discovered before plan proposal (Research loop output)."""
-    companies: list[str] = Field(default_factory=list)    # "Caterpillar Inc. (CAT)"
+    competitors: list[str] = Field(default_factory=list)  # equipment-maker rivals, e.g. "Caterpillar Inc. (CAT)"
+    operators: list[str] = Field(default_factory=list)    # mining companies / Komatsu customers, e.g. "BHP Group (BHP)"
+    demand_side_companies: list[str] = Field(default_factory=list)  # commodity consumers driving demand, e.g. "BYD (1211.HK)", "Volkswagen (VOW3.DE)"
     tickers: list[str] = Field(default_factory=list)      # "CAT", "VOLV-B.ST"
     commodities: list[str] = Field(default_factory=list)  # "Gold (GC=F)"
     mine_sites: list[str] = Field(default_factory=list)

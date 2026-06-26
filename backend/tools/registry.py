@@ -38,6 +38,7 @@ from tools.press_releases_tool import PressReleasesTool
 from tools.sec_filings_tool import SecFilingsTool
 from tools.stock_peers_tool import StockPeersTool
 from tools.stock_screener_tool import StockScreenerTool
+from tools.technical_report_tool import TechnicalReportTool
 from tools.web_crawl_tool import WebCrawlTool
 from tools.web_extract_tool import WebExtractTool
 from tools.web_map_tool import WebMapTool
@@ -107,6 +108,7 @@ COLLECT_TOOLS: list[BaseTool] = [
     EarningsSurprisesTool(),
     PressReleasesTool(),
     StockScreenerTool(),
+    TechnicalReportTool(),
 ]
 SYNTHESIZE_TOOLS: list[BaseTool] = [_knowledge, _episodic]
 
@@ -142,6 +144,27 @@ def get(name: str) -> BaseTool:
 
 def all_tools() -> list[BaseTool]:
     return list(_registry.values())
+
+
+# Internal tool name → friendly display name, shared by the API (sources panel)
+# and the domain agents (Gate 2 / failed-tool labels) so both speak one vocabulary.
+TOOL_DISPLAY_NAMES: dict[str, str] = {
+    "news_search": "NewsAPI",
+    "web_search": "WebSearch",
+    "search_sec_filings": "SEC EDGAR",
+    "get_mining_metals_prices": "Mining Metals (Alpha Vantage)",
+    "get_energy_cost_prices": "Energy Costs (Alpha Vantage)",
+    "get_broad_commodity_cycle": "Commodity Cycle (Alpha Vantage)",
+    "get_company_financials": "Financials (FMP)",
+    "get_equity_price": "Equity Prices",
+    "get_macro_indicator": "Macro (FRED)",
+    "masterdata_lookup": "Master Data",
+}
+
+
+def tool_display_name(tool: str) -> str:
+    """Friendly label for a tool, falling back to the raw name."""
+    return TOOL_DISPLAY_NAMES.get(tool, tool or "unknown")
 
 
 # Domain → tool name mapping (authoritative reference for domain sub-agents).
@@ -194,9 +217,11 @@ DOMAIN_TOOLS: dict[str, list[str]] = {
         "get_analyst_estimates",
         "get_company_rating",
         "get_press_releases",
+        "get_mine_technical_report",
     ],
     "mining_projects": [
         "search_sec_filings",
+        "get_mine_technical_report",
         "get_equity_price",
         "get_equity_history",
         "get_equity_financials",
@@ -238,6 +263,12 @@ DOMAIN_TOOLS: dict[str, list[str]] = {
         "get_agricultural_commodity_prices",
         "get_fx_rates",
         "web_research",
+        # Demand-side consumer companies (BYD, VW, …) are routed here — their
+        # equity/financials are collected as the demand-side angle on commodities.
+        "get_company_financials",
+        "get_equity_price",
+        "get_equity_history",
+        "get_equity_financials",
     ],
     "general_search": [
         "web_search",

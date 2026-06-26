@@ -3,7 +3,7 @@ import dataclasses
 from dataclasses import dataclass
 
 from clients.base_http_client import ClientError
-from clients.fred_client import FredClient
+from clients.fred_client import FredClient, get_fred_client
 
 
 class ServiceError(Exception):
@@ -87,7 +87,7 @@ class FredService:
     """Business logic wrapper for the expanded FRED API endpoints."""
 
     def __init__(self, client: FredClient | None = None) -> None:
-        self._client = client or FredClient()
+        self._client = client or get_fred_client()
 
     async def search_series(self, search_text: str, limit: int = 20) -> list[FredSeriesMeta]:
         try:

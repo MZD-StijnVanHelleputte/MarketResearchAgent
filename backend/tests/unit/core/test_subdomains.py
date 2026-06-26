@@ -4,7 +4,11 @@ from unittest.mock import MagicMock
 
 from core.guardrails import Guardrails
 from core.schemas import MergedChapter
-from core.subdomains import assemble_entity_evidence, enumerate_subdomains
+from core.subdomains import (
+    assemble_entity_evidence,
+    enumerate_subdomains,
+    group_datasets_by_entity,
+)
 import core.subdomains as subdomains_module
 
 
@@ -23,11 +27,43 @@ def _masterdata():
         {"name": "WesTrac", "parent": "Seven Group Holdings"},
         {"name": "Hastings Deering", "parent": "Sime Darby Industrial"},
     ]
-    md.get_sites.return_value = [
-        {"name": "Escondida", "operator": "BHP", "operator_ticker": "BHP", "commodity": "copper"},
-        {"name": "Grasberg", "operator": "Freeport-McMoRan", "operator_ticker": "FCX", "commodity": "copper_gold"},
+    md.get_operators.return_value = [
+        {"name": "BHP", "ticker": "BHP", "is_private": False, "primary_commodities": ["copper", "iron_ore"]},
+        {"name": "Freeport-McMoRan", "ticker": "FCX", "is_private": False, "primary_commodities": ["copper", "gold"]},
+        {"name": "Codelco", "ticker": None, "is_private": True, "primary_commodities": ["copper"]},
     ]
     return md
+
+
+def test_group_datasets_by_entity_buckets_under_named_competitor():
+    """A Gate-2 dataset mentioning a competitor lands under that entity; an
+    unattributable dataset falls into a trailing 'General' bucket."""
+    datasets = [
+        {"tool": "get_company_financials", "title": "CAT FY — 4 row(s)",
+         "data_type": "financials", "label": "CAT FY",
+         "series_id": "get_company_financials:CAT:annual"},
+        {"tool": "news_search", "title": "3 article(s)", "data_type": "articles",
+         "items": [{"title": "Deere & Company beats estimates", "url": "https://x/de"}]},
+        {"tool": "web_search", "title": "2 result(s)", "data_type": "web_results",
+         "items": [{"title": "industry outlook", "url": "https://x/y"}]},
+    ]
+    plan = {"entity_manifest": {"tickers": ["CAT", "DE"]}}
+    groups = group_datasets_by_entity("competition", datasets, plan, _masterdata())
+
+    by_label = {g["label"]: g for g in groups}
+    assert "Caterpillar" in by_label
+    assert by_label["Caterpillar"]["datasets"][0]["series_id"] == "get_company_financials:CAT:annual"
+    assert "Deere & Company (John Deere)" in by_label
+    # The generic web_search result matches no competitor → General bucket.
+    assert "General" in by_label
+    assert by_label["General"]["datasets"][0]["tool"] == "web_search"
+
+
+def test_group_datasets_by_entity_thematic_domain_single_bucket():
+    """Thematic / non-decomposable domains skip the entity tier (no LLM at a gate)."""
+    datasets = [{"tool": "get_macro_indicator", "data_type": "numeric_series", "label": "GDP"}]
+    groups = group_datasets_by_entity("macro_geopolitics", datasets, {}, _masterdata())
+    assert groups == [{"label": "General", "datasets": datasets}]
 
 
 def test_competition_enumerates_only_entities_present_in_evidence():

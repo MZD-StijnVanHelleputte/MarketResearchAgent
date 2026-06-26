@@ -84,8 +84,10 @@ def enumerate_subdomains(
     usage: dict = {}
 
     if domain in _THEMATIC_DOMAINS:
+        manifest = plan.get("entity_manifest", {}) if isinstance(plan, dict) else {}
+        demand_side = [str(c).strip() for c in (manifest.get("demand_side_companies") or []) if str(c).strip()]
         try:
-            candidates, usage = _theme_candidates(domain, merged_chapter)
+            candidates, usage = _theme_candidates(domain, merged_chapter, demand_side)
         except Exception as exc:  # never let enumeration break synthesis
             logger.warning("enumerate_subdomains(%s): theme extraction failed: %s", domain, exc)
             return [], {}
@@ -179,6 +181,59 @@ def assemble_entity_evidence(
     return evidence
 
 
+def group_datasets_by_entity(
+    domain: str,
+    datasets: list[dict],
+    plan: dict,
+    masterdata,
+) -> list[dict]:
+    """Bucket a domain's Gate-2 datasets under the named entity each one mentions.
+
+    Reuses the same candidate builders and alias matching as synthesis-time
+    decomposition, so Gate 2's "Competition → Caterpillar / John Deere" grouping
+    is consistent with the eventual chapter structure. Each dataset is assigned to
+    the first candidate whose aliases it mentions; unattributable datasets fall into
+    a trailing "General" bucket.
+
+    Returns [{"label": str, "datasets": [...]}] with only non-empty buckets.
+    Thematic / non-decomposable domains (no fixed entity list, and no LLM call at a
+    gate) return a single {"label": "General", "datasets": datasets} bucket.
+    """
+    if not datasets:
+        return []
+
+    builder = _CANDIDATE_BUILDERS.get(domain)
+    if builder is None:
+        return [{"label": "General", "datasets": datasets}]
+
+    manifest = plan.get("entity_manifest", {}) if isinstance(plan, dict) else {}
+    try:
+        candidates = builder(manifest, masterdata)
+    except Exception as exc:  # never let grouping break the gate
+        logger.warning("group_datasets_by_entity(%s): candidate build failed: %s", domain, exc)
+        return [{"label": "General", "datasets": datasets}]
+
+    buckets: dict[str, dict] = {}
+    order: list[str] = []
+    general: list[dict] = []
+    for ds in datasets:
+        matched = next(
+            (c for c in candidates if _dataset_mentions(ds, c.aliases)), None
+        )
+        if matched is None:
+            general.append(ds)
+            continue
+        if matched.label not in buckets:
+            buckets[matched.label] = {"label": matched.label, "datasets": []}
+            order.append(matched.label)
+        buckets[matched.label]["datasets"].append(ds)
+
+    result = [buckets[label] for label in order]
+    if general:
+        result.append({"label": "General", "datasets": general})
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Per-domain candidate builders
 # ---------------------------------------------------------------------------
@@ -203,7 +258,18 @@ def _competition_candidates(manifest: dict, masterdata) -> list[Subdomain]:
             query_hint=f"{name} ({ticker}) competitor strategy financials",
         ))
 
-    # Any planned ticker not in master data (e.g. a newly surfaced rival).
+    # Researched competitors not in master data (e.g. a newly surfaced rival) —
+    # use the researched name as the label so we don't fall back to a bare ticker.
+    seen_names = {c.get("name", "") for c in competitors}
+    for c in manifest.get("competitors", []) or []:
+        label = str(c).strip()
+        if label and label not in seen_names:
+            cands.append(Subdomain(
+                key=label, label=label, aliases={label},
+                query_hint=f"{label} competitor strategy",
+            ))
+
+    # Any planned ticker not in master data and not already covered above by name.
     for t in manifest.get("tickers", []) or []:
         tu = str(t).strip().upper()
         if tu and tu not in by_ticker:
@@ -256,21 +322,21 @@ def _distributors_candidates(manifest: dict, masterdata) -> list[Subdomain]:
 
 def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
     cands: list[Subdomain] = []
-    # Mine operators are Komatsu's primary customer base.
+    # Mining operators are Komatsu's primary customer base.
     seen: set[str] = set()
-    for s in masterdata.get_sites():
-        operator = s.get("operator", "")
-        op_ticker = str(s.get("operator_ticker", "") or "")
-        if operator and operator not in seen:
-            seen.add(operator)
+    for op in masterdata.get_operators():
+        name = op.get("name", "")
+        ticker = str(op.get("ticker", "") or "")
+        if name and name not in seen:
+            seen.add(name)
             cands.append(Subdomain(
-                key=op_ticker.upper() or operator,
-                label=operator,
-                aliases={operator, op_ticker},
-                query_hint=f"{operator} capex equipment spend",
+                key=ticker.upper() or name,
+                label=name,
+                aliases={name, ticker},
+                query_hint=f"{name} capex equipment spend",
             ))
-    # Plus any researched companies from the manifest.
-    for c in manifest.get("companies", []) or []:
+    # Plus any researched mining operators from the manifest.
+    for c in manifest.get("operators", []) or []:
         label = str(c).strip()
         if label:
             cands.append(Subdomain(
@@ -282,16 +348,7 @@ def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
 
 def _mining_projects_candidates(manifest: dict, masterdata) -> list[Subdomain]:
     cands: list[Subdomain] = []
-    for s in masterdata.get_sites():
-        name = s.get("name", "")
-        if not name:
-            continue
-        cands.append(Subdomain(
-            key=name,
-            label=name,
-            aliases={name, s.get("operator", ""), str(s.get("operator_ticker", "") or "")},
-            query_hint=f"{name} mine project {s.get('operator', '')}",
-        ))
+    # Mine sites are surfaced by research (manifest), not master data.
     for site in manifest.get("mine_sites", []) or []:
         label = str(site).strip()
         if label:
@@ -302,7 +359,9 @@ def _mining_projects_candidates(manifest: dict, masterdata) -> list[Subdomain]:
     return cands
 
 
-def _theme_candidates(domain: str, merged_chapter: MergedChapter) -> tuple[list[Subdomain], dict]:
+def _theme_candidates(
+    domain: str, merged_chapter: MergedChapter, demand_side: list[str] | None = None
+) -> tuple[list[Subdomain], dict]:
     """LLM-derived themes for domains with no fixed master-data entity list.
 
     Returns ([], {}) when evidence is too thin to bother calling the LLM, and
@@ -318,7 +377,16 @@ def _theme_candidates(domain: str, merged_chapter: MergedChapter) -> tuple[list[
     evidence_text = _evidence_text(merged_chapter)[
         : settings.synthesis.theme_extraction_max_evidence_chars
     ]
-    prompt = THEME_EXTRACTION_TEMPLATE.format(domain=domain, evidence_text=evidence_text)
+    hint = ""
+    if demand_side:
+        hint = (
+            "\nNote: these demand-side consumer companies were researched for their "
+            "commodity demand — if they appear in the evidence above, surface a distinct "
+            "demand-side theme covering them: " + ", ".join(demand_side) + "\n"
+        )
+    prompt = THEME_EXTRACTION_TEMPLATE.format(
+        domain=domain, evidence_text=evidence_text, hint=hint
+    )
 
     llm = LLMClient()
     resp = llm.complete(

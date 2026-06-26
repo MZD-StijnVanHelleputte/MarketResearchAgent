@@ -129,7 +129,7 @@ async def test_clarify_endpoint_resumes_run():
                 f"/runs/{run_id}/clarify",
                 json={
                     "equipment_models": ["PC2000", "PC3000"],
-                    "mine_sites": ["Escondida", "Grasberg"],
+                    "operators": ["Rio Tinto", "BHP"],
                     "competitor_tickers": ["CAT", "HII"],
                 },
             )
@@ -140,7 +140,7 @@ async def test_clarify_endpoint_resumes_run():
     # Verify preferences were saved
     saved_keys = {k for k, _ in set_pref_calls}
     assert "equipment_models" in saved_keys
-    assert "mine_sites" in saved_keys
+    assert "operators" in saved_keys
     assert "competitor_tickers" in saved_keys
 
     # Verify graph was re-invoked with clarification_done=True

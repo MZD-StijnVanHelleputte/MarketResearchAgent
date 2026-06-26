@@ -49,3 +49,55 @@ async def test_raises_client_error_on_4xx():
         with pytest.raises(ClientError) as exc_info:
             await client.search_filings("test")
     assert exc_info.value.status == 429
+
+
+TICKER_MAP_RESPONSE = {
+    "0": {"cik_str": 831259, "ticker": "FCX", "title": "FREEPORT-MCMORAN INC"},
+    "1": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA CORP"},
+}
+
+
+@pytest.mark.asyncio
+async def test_get_cik_for_ticker_resolves_and_pads():
+    client = EdgarClient()
+    with patch.object(client, "get", new=AsyncMock(return_value=TICKER_MAP_RESPONSE)):
+        cik = await client.get_cik_for_ticker("fcx")
+    assert cik == "0000831259"
+
+
+@pytest.mark.asyncio
+async def test_get_cik_for_ticker_unknown_returns_none():
+    client = EdgarClient()
+    with patch.object(client, "get", new=AsyncMock(return_value=TICKER_MAP_RESPONSE)):
+        cik = await client.get_cik_for_ticker("NOPE")
+    assert cik is None
+
+
+@pytest.mark.asyncio
+async def test_get_cik_for_ticker_caches_after_first_fetch():
+    client = EdgarClient()
+    mock_get = AsyncMock(return_value=TICKER_MAP_RESPONSE)
+    with patch.object(client, "get", new=mock_get):
+        await client.get_cik_for_ticker("FCX")
+        await client.get_cik_for_ticker("NVDA")
+    mock_get.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_submissions_calls_correct_url():
+    client = EdgarClient()
+    with patch.object(client, "get", new=AsyncMock(return_value={"name": "FCX"})) as mock_get:
+        result = await client.get_submissions("0000831259")
+
+    mock_get.assert_called_once_with("https://data.sec.gov/submissions/CIK0000831259.json")
+    assert result == {"name": "FCX"}
+
+
+@pytest.mark.asyncio
+async def test_get_document_bytes_uses_get_bytes():
+    client = EdgarClient()
+    with patch.object(client, "get_bytes", new=AsyncMock(return_value=b"raw")) as mock_get_bytes:
+        result = await client.get_document_bytes("https://www.sec.gov/Archives/edgar/data/1/a.htm")
+
+    mock_get_bytes.assert_called_once_with("https://www.sec.gov/Archives/edgar/data/1/a.htm")
+    assert result == b"raw"

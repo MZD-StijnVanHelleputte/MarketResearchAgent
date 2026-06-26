@@ -73,7 +73,7 @@ async def test_post_chat_completes():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         await ac.put("/preferences", json={
             "equipment_models": ["PC7000", "730E"],
-            "mine_sites": ["Escondida", "Grasberg"],
+            "operators": ["Rio Tinto", "BHP"],
             "competitor_tickers": ["CAT", "VOLV-B.ST"],
         })
 

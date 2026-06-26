@@ -38,9 +38,10 @@ from langgraph.types import interrupt, Command  # noqa: F401 — Command re-expo
 from config import settings
 from core.guardrails import Guardrails, ToolNotAllowed
 from models.llm_client import LLMClient
+from models.llm_retry import call_with_backoff
 from models.usage import accumulate, llm_usage, merge_usage
 from prompts.synthesize_prompt import exec_summary_messages
-from core.event_logger import log_event
+from core.event_logger import log_event, run_lock, update_run_context
 from core.friendly_names import friendly_domain
 from core.tot.proposer import PlanProposer
 from core.tot.scorer import score_and_prune
@@ -53,7 +54,12 @@ from memory.context_window import ContextWindow
 from memory.sqlite_store import SqliteStore
 from core.merger import merge_chapter_sets, chapter_set_overlap
 from core.schemas import ChapterDraft, MergedChapter
-from core.subdomains import enumerate_subdomains, assemble_entity_evidence
+from core.subdomains import (
+    enumerate_subdomains,
+    assemble_entity_evidence,
+    group_datasets_by_entity,
+)
+from tools.registry import tool_display_name
 from core import completeness
 from core.tool_router import async_route
 from services.masterdata_service import MasterDataService
@@ -84,7 +90,7 @@ _UNSTRUCTURED_TOOLS = {
 }
 
 # Required preference keys for entity clarification
-_REQUIRED_ENTITY_PREFS = ("equipment_models", "mine_sites", "competitor_tickers")
+_REQUIRED_ENTITY_PREFS = ("equipment_models", "operators", "competitor_tickers")
 
 
 class AgentState(TypedDict):
@@ -120,6 +126,9 @@ class AgentState(TypedDict):
     run_start_time: float
     # Cumulative seconds spent paused at gates/timeout-checks, excluded from elapsed-time math
     paused_seconds: float
+    # Number of times the user has clicked "continue" on a timeout prompt;
+    # the next prompt is due at (timeout_prompt_count + 1) * soft_timeout_s of active elapsed time
+    timeout_prompt_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -154,14 +163,57 @@ def _draft_ok(draft: dict | None) -> bool:
     return not draft.get("tool_errors")
 
 
-_collect_locks: dict[str, asyncio.Lock] = {}
 
 
-def _collect_lock(run_id: str) -> asyncio.Lock:
-    lock = _collect_locks.get(run_id)
-    if lock is None:
-        lock = _collect_locks[run_id] = asyncio.Lock()
-    return lock
+def _draft_source_entries(domain: str, draft: dict) -> list[dict]:
+    """Turn one domain draft into enriched Sources-panel entries.
+
+    One entry per collected dataset (typed: data_type + label + count) and one per
+    failed tool (rendered in red on the frontend), so the live panel reflects *what*
+    was collected and *what was attempted but failed* — not just a list of URLs.
+    """
+    entries: list[dict] = []
+    for ds in draft.get("datasets") or []:
+        entries.append({
+            "domain": domain,
+            "tool": tool_display_name(ds.get("tool", "")),
+            "title": ds.get("title") or "",
+            "data_type": ds.get("data_type", "data"),
+            "label": ds.get("label", ""),
+            "count": ds.get("count", 0),
+            "url": None,
+            "published_at": None,
+            "failed": False,
+        })
+    for ft in draft.get("failed_tools") or []:
+        display = ft.get("tool_display") or tool_display_name(ft.get("tool", ""))
+        entries.append({
+            "domain": domain,
+            "tool": display,
+            "title": display,
+            "data_type": "failed",
+            "label": display,
+            "count": 0,
+            "url": None,
+            "published_at": None,
+            "failed": True,
+            "reason": ft.get("reason", ""),
+        })
+    # A domain that only produced cited links (no normalized dataset) still appears.
+    if not entries and (draft.get("citations")):
+        n = len(draft["citations"])
+        entries.append({
+            "domain": domain,
+            "tool": tool_display_name("web_search"),
+            "title": f"{n} link(s)",
+            "data_type": "web_results",
+            "label": "",
+            "count": n,
+            "url": None,
+            "published_at": None,
+            "failed": False,
+        })
+    return entries
 
 
 async def _persist_partial_sources(
@@ -170,22 +222,19 @@ async def _persist_partial_sources(
     """Append one domain's sources to the run row as soon as its agent finishes,
     so the frontend Sources panel can populate live during collection instead of
     waiting for the whole collect_node (and Gate 2) to complete."""
-    new_entries = [
-        {
-            "domain": domain,
-            "tool": "WebSearch",
-            "title": url,
-            "url": url,
-            "published_at": None,
-        }
-        for url in (draft.citations or [])
-    ]
+    new_entries = _draft_source_entries(domain, draft.model_dump())
     if not new_entries:
         return
     store = SqliteStore()
-    async with _collect_lock(run_id):
+    async with run_lock(run_id):
         row = await store.get_run(run_id)
         existing = list(row.get("sources") or []) if row else []
+        # Drop this domain's provisional per-tool rows (written live by the tool
+        # router) so they're replaced by the typed datasets, not duplicated.
+        existing = [
+            s for s in existing
+            if not (s.get("provisional") and s.get("domain") == domain)
+        ]
         existing.extend(new_entries)
         await store.upsert_run(
             run_id, session_id, query,
@@ -257,7 +306,8 @@ def _timeout_interrupt_if_needed(state: AgentState) -> None:
     if not start:
         return
     elapsed = int(time.time() - start - state.get("paused_seconds", 0.0))
-    if elapsed <= settings.react.soft_timeout_s:
+    next_threshold = settings.react.soft_timeout_s * (state.get("timeout_prompt_count", 0) + 1)
+    if elapsed <= next_threshold:
         return
     minutes = elapsed // 60
     decision = interrupt({
@@ -319,14 +369,17 @@ async def understand_node(state: AgentState) -> dict:
             research_context = await researcher.run(query)
             researcher_usage = researcher.last_usage
             logger.info(
-                "understand_node: research found %d companies, %d tickers, %d commodities",
-                len(research_context.companies),
+                "understand_node: research found %d competitors, %d operators, "
+                "%d tickers, %d commodities",
+                len(research_context.competitors),
+                len(research_context.operators),
                 len(research_context.tickers),
                 len(research_context.commodities),
             )
             await log_event(
                 "progress",
-                f"Found {len(research_context.companies)} relevant companies and "
+                f"Found {len(research_context.competitors)} competitors, "
+                f"{len(research_context.operators)} mining operators, and "
                 f"{len(research_context.commodities)} commodities to investigate.",
             )
         except Exception as exc:
@@ -437,6 +490,8 @@ async def understand_node(state: AgentState) -> dict:
 
 
 async def collect_node(state: AgentState) -> dict:
+    # Tag progress events from this node with the collect stage (see synthesize_node).
+    update_run_context(stage="collect")
     try:
         _timeout_interrupt_if_needed(state)
     except _TimeoutStopSignal:
@@ -527,24 +582,13 @@ async def collect_node(state: AgentState) -> dict:
         )
 
     # Build the sources manifest from the full merged chapter_sets (carried + new), so the
-    # sources panel reflects everything collected across iterations.
-    manifest: dict[str, list] = {d: [] for d in _DOMAINS}  # backward-compat
+    # sources panel reflects everything collected across iterations. Entries are already
+    # in the enriched Sources-panel shape (typed datasets + failed tools); the API layer
+    # just flattens them onto the run row.
+    manifest: dict[str, list] = {d: [] for d in _DOMAINS}
     for key, draft in chapter_sets.items():
-        plan_id, _, domain = key.partition("::")
-        citations = draft.get("citations") or []
-        if citations:
-            for url in citations:
-                manifest.setdefault(domain, []).append({
-                    "title": url,
-                    "url": url,
-                    "_tool": "web_search",
-                    "published_at": None,
-                })
-        else:
-            manifest.setdefault(domain, []).append({
-                "title": f"{domain}/{plan_id[:8]}",
-                "description": (draft.get("text") or "")[:200],
-            })
+        _plan_id, _, domain = key.partition("::")
+        manifest.setdefault(domain, []).extend(_draft_source_entries(domain, draft))
 
     if collected_tool_errors:
         logger.warning("collect_node: %d tool/agent failures: %s",
@@ -582,27 +626,36 @@ async def data_review_node(state: AgentState) -> dict:
     collect/backtrack retry loop has settled (good confidence or retries exhausted),
     so the human is never re-prompted on transient tool failures.
 
-    Surfaces the actual datasets collected per domain (tables / lists / summaries)
-    plus any tool failures as gap flags. On "redirect" the collection is reset and
-    re-run; on approve the graph proceeds to synthesis.
+    Surfaces the actual datasets collected per domain, grouped by the entity each
+    one is about (e.g. Competition → Caterpillar / John Deere), plus any tool
+    failures shown as gaps. On "redirect" the collection is reset and re-run; on
+    approve the graph proceeds to synthesis.
     """
     if not settings.gates.gate_2_enabled or settings.gates.auto_approve_gates:
         return {"stage": "synthesize"}
 
     chapter_sets: dict[str, dict] = dict(state.get("chapter_sets") or {})
+    plans = state.get("plans") or []
+    primary_plan = plans[0] if plans else {}
+    masterdata = MasterDataService()
     domains_payload = []
     for domain in _DOMAINS:
         drafts = [v for k, v in chapter_sets.items() if k.endswith(f"::{domain}")]
         if not drafts:
             continue
         datasets: list[dict] = []
-        errors: list[str] = []
+        failed_tools: list[dict] = []
         for d in drafts:
             datasets.extend(d.get("datasets") or [])
-            errors.extend(d.get("tool_errors") or [])
-        if not datasets and not errors:
+            failed_tools.extend(d.get("failed_tools") or [])
+        if not datasets and not failed_tools:
             continue
-        domains_payload.append({"domain": domain, "datasets": datasets, "errors": errors})
+        entities = group_datasets_by_entity(domain, datasets, primary_plan, masterdata)
+        domains_payload.append({
+            "domain": domain,
+            "entities": entities,
+            "failed_tools": failed_tools,
+        })
 
     decision = interrupt({"gate": 2, "domains": domains_payload})
     if decision == "redirect":
@@ -616,8 +669,22 @@ async def backtrack_node(state: AgentState) -> dict:
 
 async def partial_brief_node(state: AgentState) -> dict:
     """Assemble a partial brief from whatever chapter_sets exist when a guardrail fires."""
-    chapter_sets = state.get("chapter_sets") or {}
     all_warnings = list(state.get("warnings", []))
+
+    # If synthesis already produced chapters (e.g. a soft timeout landed *after*
+    # the synthesize node finished its work), keep them rather than rebuilding a
+    # cruder brief from chapter_sets — and carry the executive summary along.
+    existing = state.get("synthesis_chapters") or []
+    if existing:
+        return {
+            "synthesis_chapters": existing,
+            "stage": "done",
+            "exec_summary": state.get("exec_summary", ""),
+            "warnings": all_warnings,
+            **accumulate(state),
+        }
+
+    chapter_sets = state.get("chapter_sets") or {}
 
     chapters: list[dict] = []
     synth_usages: list[dict] = []
@@ -737,10 +804,16 @@ async def _remediate_subchapters(
 
 
 async def synthesize_node(state: AgentState) -> dict:
-    try:
-        _timeout_interrupt_if_needed(state)
-    except _TimeoutStopSignal:
-        return {"stage": "partial"}
+    # Tag every progress event emitted from this node with the real stage; the
+    # context var is otherwise left at "understand" (set once at run start), so
+    # chapter-writing events would be mis-filed under the wrong phase.
+    update_run_context(stage="synthesize")
+    # Deliberately no soft-timeout interrupt here. Synthesis is the final
+    # productive phase: pausing it to ask "continue or stop?" risks discarding
+    # work that lives in local variables until this node's final return, and a
+    # second interrupt in the same node (alongside Gate 3 below) lets a resume
+    # value meant for one interrupt be consumed by the other. The soft timeout
+    # is still enforced at the understand / collect / backtrack node starts.
 
     plans = state.get("plans") or []
     if not plans:
@@ -981,7 +1054,13 @@ async def synthesize_node(state: AgentState) -> dict:
             msgs = exec_summary_messages(
                 query, chapter_texts, min_words=target_min, max_words=target_max
             )
-            resp = llm.complete(msgs, temperature=0.3)
+            # Run off the event loop and ride out transient 429s/timeouts, exactly
+            # as the per-chapter synthesis calls do — otherwise this lone synchronous
+            # call freezes the loop (stalling status polls) and dies on the first
+            # rate-limit that follows the parallel subchapter/rollup burst.
+            resp = await asyncio.to_thread(
+                call_with_backoff, llm.complete, msgs, temperature=0.3
+            )
             usage_dicts.append(llm_usage(resp.usage))
             exec_summary = resp.content or ""
             word_count = len(exec_summary.split())
@@ -994,17 +1073,30 @@ async def synthesize_node(state: AgentState) -> dict:
                         f"Revise it to be between {target_min} and {target_max} words."
                     ),
                 })
-                resp2 = llm.complete(msgs, temperature=0.3)
+                resp2 = await asyncio.to_thread(
+                    call_with_backoff, llm.complete, msgs, temperature=0.3
+                )
                 usage_dicts.append(llm_usage(resp2.usage))
                 exec_summary = resp2.content or exec_summary
         except Exception as exc:
+            # Non-fatal: the chapters are still a valid report. But make it loud —
+            # surface the reason in the warnings appendix instead of only logging it,
+            # so the empty/fallback summary is explainable rather than mysterious.
             logger.warning("synthesize_node: exec summary generation failed (non-fatal): %s", exc)
+            all_warnings.append(f"Executive summary generation failed after retries: {exc}")
 
-    # Deterministic fallback: first 300 words of the first chapter so Gate 3 always has content.
+    # Deterministic fallback: first 300 words of the first chapter so Gate 3 always
+    # has content — but label it honestly so a truncated chapter chunk is never
+    # presented as if it were a real executive summary.
     if not exec_summary and chapters:
         first_text = chapters[0].get("text", "") if isinstance(chapters[0], dict) else ""
         words = first_text.split()
-        exec_summary = " ".join(words[:300]) + ("…" if len(words) > 300 else "")
+        excerpt = " ".join(words[:300]) + ("…" if len(words) > 300 else "")
+        exec_summary = (
+            "_The executive summary could not be generated automatically for this run; "
+            "the excerpt below is drawn from the first chapter as a placeholder._\n\n"
+            f"{excerpt}"
+        )
 
     # Guarantee the chat always shows something at completion, even when synthesis
     # produced no chapters at all (rather than silently leaving exec_summary empty).

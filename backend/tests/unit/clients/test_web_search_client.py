@@ -20,13 +20,14 @@ async def test_search_forwards_query():
     body = mock_post.call_args[1]["json"]
     assert body["query"] == "Komatsu mining equipment"
     assert body["max_results"] == 3
-    assert "api_key" in body
     assert result == SEARCH_RESPONSE
 
 
-def test_auth_headers_empty():
+def test_auth_headers_uses_bearer():
+    # Tavily authenticates via Authorization: Bearer <key>, not an api_key body field.
     client = WebSearchClient()
-    assert client._auth_headers() == {}
+    client._api_key = "tvly-test-key"
+    assert client._auth_headers() == {"Authorization": "Bearer tvly-test-key"}
 
 
 @pytest.mark.asyncio

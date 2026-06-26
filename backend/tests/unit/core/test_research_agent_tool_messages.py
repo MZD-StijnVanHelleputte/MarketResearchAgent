@@ -8,6 +8,8 @@ message per tool call. The old shape failed Mistral's schema validation
 (union_tag_invalid) and silently degraded every run to an empty research
 context.
 """
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -44,3 +46,32 @@ async def test_tool_results_use_flat_mistral_shape(monkeypatch):
     assert isinstance(msg["content"], str)
     assert "type" not in msg
     assert "tool_use_id" not in msg
+
+
+@pytest.mark.asyncio
+async def test_batched_tool_calls_run_concurrently(monkeypatch):
+    """6 tool calls in one LLM response, bounded to 3-way concurrency, take ~2 delay-windows."""
+    agent = ResearchAgent(max_calls=6, timeout_s=5)
+
+    tool_calls = [
+        ToolCall(id=f"call_{i}", name="masterdata_lookup", arguments={"entity_type": "competitors"})
+        for i in range(6)
+    ]
+    first_response = LLMResponse(content=None, tool_calls=tool_calls, usage={})
+    final_response = LLMResponse(content='{"summary": "ok"}', tool_calls=[], usage={})
+    agent._llm.acomplete = AsyncMock(side_effect=[first_response, final_response])
+
+    delay = 0.05
+
+    async def _slow_route(_name, _args):
+        await asyncio.sleep(delay)
+        return {"results": []}
+
+    monkeypatch.setattr("core.research_agent.async_route", _slow_route)
+
+    start = time.monotonic()
+    await agent._loop("copper demand")
+    elapsed = time.monotonic() - start
+
+    # Sequential execution would take ~6*delay; bounded concurrency (3) takes ~2*delay.
+    assert elapsed < delay * 4

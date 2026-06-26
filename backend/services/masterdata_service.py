@@ -22,7 +22,7 @@ class MasterDataService:
     def __init__(self) -> None:
         from config.settings import settings
         self._equipment = self._load("equipment/komatsu_equipment.json")
-        self._sites = self._load("sites/mining_sites.json")
+        self._operators = self._load("operators/operators.json")
         self._competitors = self._load("competitors/competitors.json")
         self._distributors = self._load("distributors/distributors.json")
         self._commodities = self._load_csv(settings.commodity_tickers_path)
@@ -50,8 +50,8 @@ class MasterDataService:
     def get_equipment(self) -> list[dict]:
         return self._equipment
 
-    def get_sites(self) -> list[dict]:
-        return self._sites
+    def get_operators(self) -> list[dict]:
+        return self._operators
 
     def get_competitors(self) -> list[dict]:
         return self._competitors
@@ -65,7 +65,7 @@ class MasterDataService:
     _ENTITY_MAP: dict[str, str] = {
         "distributors": "_distributors",
         "competitors": "_competitors",
-        "sites": "_sites",
+        "operators": "_operators",
         "equipment": "_equipment",
         "commodities": "_commodities",
     }

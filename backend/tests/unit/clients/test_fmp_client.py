@@ -15,8 +15,9 @@ async def test_get_company_profile_returns_dict():
 
     mock_get.assert_called_once()
     path = mock_get.call_args[0][0]
-    assert path == "/v3/profile/CAT"
+    assert path == "/stable/profile"
     params = mock_get.call_args[1]["params"]
+    assert params["symbol"] == "CAT"
     assert "apikey" in params
     assert result == PROFILE_RESPONSE
 
@@ -27,7 +28,8 @@ async def test_get_key_metrics_returns_dict():
     with patch.object(client, "get", new=AsyncMock(return_value=METRICS_RESPONSE)) as mock_get:
         result = await client.get_key_metrics("CAT")
 
-    assert "/v3/key-metrics-ttm/CAT" in mock_get.call_args[0][0]
+    assert mock_get.call_args[0][0] == "/stable/key-metrics-ttm"
+    assert mock_get.call_args[1]["params"]["symbol"] == "CAT"
     assert result == METRICS_RESPONSE
 
 

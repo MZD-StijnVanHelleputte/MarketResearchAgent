@@ -6,8 +6,17 @@ Tests patch core.graph._run_domain_agent to isolate collect_node logic.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.graph import collect_node, AgentState
+from core.graph import collect_node, data_review_node, AgentState
 from core.schemas import ChapterDraft
+
+
+def _masterdata_mock() -> MagicMock:
+    md = MagicMock()
+    md.get_competitors.return_value = [{"name": "Caterpillar", "ticker": "CAT"}]
+    md.get_commodities.return_value = []
+    md.get_distributors.return_value = []
+    md.get_operators.return_value = []
+    return md
 
 
 PLAN = {
@@ -189,3 +198,67 @@ async def test_collect_node_consolidated_plan_shape():
     assert result["confidence"] == 1.0
     assert "consolidated_test::competition" in result["chapter_sets"]
     assert "consolidated_test::commodities" in result["chapter_sets"]
+
+
+@pytest.mark.asyncio
+async def test_data_review_node_groups_by_entity_and_surfaces_failures():
+    """Gate 2 payload nests datasets under the entity they describe and carries
+    structured failed tools so the UI can show 'tried but failed' in red."""
+    draft = ChapterDraft(
+        domain="competition", plan_id="plan_test", text="CAT update",
+        datasets=[{
+            "tool": "get_company_financials", "title": "CAT FY — 4 row(s)",
+            "kind": "table", "data_type": "financials", "label": "CAT FY", "count": 4,
+            "series_id": "get_company_financials:CAT:annual",
+        }],
+        failed_tools=[{
+            "tool": "search_sec_filings", "tool_display": "SEC EDGAR",
+            "reason": "HTTP 429 rate limited",
+        }],
+    )
+    state = _base_state(
+        chapter_sets={"plan_test::competition": draft.model_dump()},
+        plans=[{"plan_id": "plan_test", "entity_manifest": {"tickers": ["CAT"]}}],
+    )
+
+    captured: dict = {}
+
+    def fake_interrupt(payload):
+        captured["payload"] = payload
+        return "approve"
+
+    with patch("core.graph.interrupt", side_effect=fake_interrupt), \
+         patch("core.graph.MasterDataService", return_value=_masterdata_mock()):
+        result = await data_review_node(state)
+
+    assert result["stage"] == "synthesize"
+    payload = captured["payload"]
+    assert payload["gate"] == 2
+    comp = next(d for d in payload["domains"] if d["domain"] == "competition")
+    labels = {e["label"] for e in comp["entities"]}
+    assert "Caterpillar" in labels
+    assert comp["failed_tools"][0]["tool_display"] == "SEC EDGAR"
+
+
+def test_draft_source_entries_types_datasets_and_failures():
+    """Live Sources entries are typed (data_type + label + count); failures are
+    flagged in red via failed=True with a reason."""
+    from core.graph import _draft_source_entries
+
+    draft = ChapterDraft(
+        domain="commodities", plan_id="p", text="x",
+        datasets=[{"tool": "get_mining_metals_prices", "title": "COPPER — 250 point(s)",
+                   "data_type": "numeric_series", "label": "COPPER", "count": 250}],
+        failed_tools=[{"tool": "get_macro_indicator", "tool_display": "Macro (FRED)",
+                       "reason": "HTTP 429"}],
+    ).model_dump()
+
+    entries = _draft_source_entries("commodities", draft)
+    good = next(e for e in entries if not e["failed"])
+    bad = next(e for e in entries if e["failed"])
+
+    assert good["data_type"] == "numeric_series"
+    assert good["label"] == "COPPER"
+    assert good["count"] == 250
+    assert bad["data_type"] == "failed"
+    assert bad["reason"] == "HTTP 429"

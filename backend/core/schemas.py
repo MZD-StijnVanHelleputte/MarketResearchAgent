@@ -18,6 +18,9 @@ class ChapterDraft(BaseModel):
     # Tool calls that failed during collection (e.g. "news_search: HTTP 429 ..."),
     # surfaced so failures are visible instead of only logged to stdout.
     tool_errors: list[str] = Field(default_factory=list)
+    # Structured form of the failures above for the UI: {tool, tool_display, reason}.
+    # Lets the frontend render "tried X — failed: reason" in red without parsing strings.
+    failed_tools: list[dict] = Field(default_factory=list)
     # Normalized raw tool results for the Gate 2 data review (tables/lists/summaries).
     datasets: list[dict] = Field(default_factory=list)
     # Token usage for the live cost counter: {prompt_tokens, completion_tokens, requests}

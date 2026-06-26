@@ -25,11 +25,12 @@ from config import settings
 from core.event_logger import log_event, set_run_context
 from core.friendly_names import friendly_domain, friendly_tool
 from core.schemas import ChapterDraft
-from core.tool_router import async_route
+from core.tool_router import async_route, is_permanent_tool_error
 from models.llm_client import LLMClient
 from models.llm_retry import call_with_backoff, crew_semaphore
 from models.usage import crew_usage, llm_usage, merge_usage
 from prompts.domain_agent_prompt import DOMAIN_TASK_TEMPLATE, TOOL_REPAIR_TEMPLATE
+from tools.registry import tool_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ class BaseDomainAgent(ABC):
 
         raw_results: list[dict] = []
         tool_errors: list[str] = []
+        failed_tools: list[dict] = []
         repair_usages: list[dict] = []
         tool_calls_made = len(domain_calls)
         for tool_name, result, usages, error in outcomes:
@@ -127,6 +129,11 @@ class BaseDomainAgent(ABC):
                     "domain_agent %s: tool %s failed: %s", self.DOMAIN, tool_name, error
                 )
                 tool_errors.append(f"{self.DOMAIN}/{tool_name}: {error}")
+                failed_tools.append({
+                    "tool": tool_name,
+                    "tool_display": tool_display_name(tool_name),
+                    "reason": str(error),
+                })
 
         tool_usage = {"prompt_tokens": 0, "completion_tokens": 0, "requests": tool_calls_made}
 
@@ -139,8 +146,14 @@ class BaseDomainAgent(ABC):
             )
             draft = self._fallback(plan_id, raw_results)
             tool_errors.append(f"{self.DOMAIN}/synthesis: {exc}")
+            failed_tools.append({
+                "tool": "synthesis",
+                "tool_display": "Synthesis",
+                "reason": str(exc),
+            })
 
         draft.tool_errors = tool_errors
+        draft.failed_tools = failed_tools
         draft.datasets = self._to_datasets(raw_results)
         draft.usage = merge_usage(draft.usage, tool_usage, *repair_usages)
         return draft
@@ -158,6 +171,11 @@ class BaseDomainAgent(ABC):
             return await async_route(tool_name, arguments), repair_usages, None
         except Exception as exc:
             last_error = str(exc)
+            # A permanent client error (e.g. FRED 400 "the series does not exist") can
+            # never be fixed by retrying with adapted arguments — skip the LLM repair
+            # loop and fail fast instead of burning several LLM round-trips.
+            if is_permanent_tool_error(exc):
+                return None, repair_usages, last_error
 
         current_args = dict(arguments)
         for _ in range(settings.react.tool_repair_max_attempts):
@@ -295,11 +313,17 @@ class BaseDomainAgent(ABC):
                     latest = result.get("latest") or {}
                     if isinstance(latest, dict) and latest.get("value") is not None:
                         rows_in = [latest]
+                # Sort oldest -> newest and keep the most recent CAP points, so a
+                # truncated series still reaches up to the latest available date
+                # instead of being cut off at the oldest CAP rows.
+                rows_in.sort(key=lambda r: str(r.get("date", "")))
                 value_col = f"value ({unit})" if unit else "value"
-                rows = [[str(r.get("date", "")), str(r.get("value", ""))] for r in rows_in[:CAP]]
+                rows = [[str(r.get("date", "")), str(r.get("value", ""))] for r in rows_in[-CAP:]]
                 title = f"{symbol or 'series'} — {len(rows_in)} point(s)"
                 datasets.append({
                     "tool": tool, "title": title, "kind": "table",
+                    "data_type": "numeric_series", "label": symbol or "series",
+                    "count": len(rows_in),
                     "columns": ["date", value_col], "rows": rows, "row_count": len(rows_in),
                     # Stable identity independent of row count, so the same series
                     # collected by different plans/domains can be deduped reliably.
@@ -310,15 +334,26 @@ class BaseDomainAgent(ABC):
                 ticker = str(result.get("ticker", "") or "")
                 period = result.get("period") or ""
                 rows_in = [r for r in (result.get("rows") or []) if isinstance(r, dict)]
+                date_key = next((k for k in (rows_in[0].keys() if rows_in else []) if "date" in k.lower()), None)
+                if date_key:
+                    # Sort oldest -> newest and keep the most recent CAP rows, so a
+                    # truncated series still reaches up to the latest available date.
+                    rows_in.sort(key=lambda r: str(r.get(date_key, "")))
+                    rows_capped = rows_in[-CAP:]
+                else:
+                    rows_capped = rows_in[:CAP]
                 columns: list[str] = []
-                for r in rows_in:
+                for r in rows_capped:
                     for k in r.keys():
                         if k not in columns:
                             columns.append(k)
-                rows = [[str(r.get(c, "")) for c in columns] for r in rows_in[:CAP]]
+                rows = [[str(r.get(c, "")) for c in columns] for r in rows_capped]
                 title = f"{ticker or 'equity'} {period} — {len(rows_in)} row(s)".replace("  ", " ").strip()
                 datasets.append({
                     "tool": tool, "title": title, "kind": "table",
+                    "data_type": "financials",
+                    "label": f"{ticker} {period}".strip() or "equity",
+                    "count": len(rows_in),
                     "columns": columns, "rows": rows, "row_count": len(rows_in),
                     "series_id": f"{tool}:{ticker}:{period}",
                 })
@@ -332,7 +367,8 @@ class BaseDomainAgent(ABC):
                 } for a in arts[:CAP] if isinstance(a, dict)]
                 datasets.append({
                     "tool": tool, "title": f"{len(arts)} article(s)",
-                    "kind": "list", "items": items,
+                    "kind": "list", "data_type": "articles", "label": "",
+                    "count": len(arts), "items": items,
                 })
 
             elif isinstance(result, dict) and "results" in result:
@@ -344,7 +380,8 @@ class BaseDomainAgent(ABC):
                 } for r in res[:CAP] if isinstance(r, dict)]
                 datasets.append({
                     "tool": tool, "title": f"{len(res)} result(s)",
-                    "kind": "list", "items": items,
+                    "kind": "list", "data_type": "web_results", "label": "",
+                    "count": len(res), "items": items,
                 })
 
             elif isinstance(result, dict) and "filings" in result:
@@ -354,16 +391,36 @@ class BaseDomainAgent(ABC):
                     "url": f.get("url") or f.get("filing_url"),
                     "snippet": f.get("file_date", ""),
                 } for f in filings[:CAP] if isinstance(f, dict)]
+                first_entity = next(
+                    (str(f.get("entity_name", "")).strip() for f in filings
+                     if isinstance(f, dict) and f.get("entity_name")), "")
                 datasets.append({
                     "tool": tool, "title": f"{len(filings)} filing(s)",
-                    "kind": "list", "items": items,
+                    "kind": "list", "data_type": "filings", "label": first_entity,
+                    "count": len(filings), "items": items,
+                })
+
+            elif isinstance(result, dict) and "technical_report" in result:
+                tr = result.get("technical_report") or {}
+                title = f"{tr.get('company_name', '')} — {tr.get('form_type', '')} Exhibit 96".strip(" —")
+                datasets.append({
+                    "tool": tool, "title": title, "kind": "summary",
+                    "data_type": "document",
+                    "label": str(tr.get("company_name", "")).strip(), "count": 1,
+                    "summary": tr.get("excerpt", ""),
+                    "items": [{
+                        "title": tr.get("exhibit_name", ""),
+                        "url": tr.get("exhibit_url"),
+                        "snippet": tr.get("filing_date", ""),
+                    }],
                 })
 
             else:
                 summary = json.dumps(result, default=str)[:2000] if result else ""
                 datasets.append({
                     "tool": tool, "title": tool,
-                    "kind": "summary", "summary": summary,
+                    "kind": "summary", "data_type": "data", "label": "", "count": 1,
+                    "summary": summary,
                 })
 
         return datasets
@@ -426,6 +483,14 @@ class BaseDomainAgent(ABC):
                         lines.append(f"[{tool}] {name} — {form} ({fdate})")
                     if url:
                         citations.append(url)
+            elif "technical_report" in result:
+                tr = result.get("technical_report") or {}
+                lines.append(
+                    f"[{tool}] {tr.get('company_name', '')} {tr.get('form_type', '')} "
+                    f"Exhibit 96 ({tr.get('filing_date', '')}): {tr.get('excerpt', '')[:300]}"
+                )
+                if tr.get("exhibit_url"):
+                    citations.append(tr["exhibit_url"])
             else:
                 summary = str(result)[:300]
                 if summary:

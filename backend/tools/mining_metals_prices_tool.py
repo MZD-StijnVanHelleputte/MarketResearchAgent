@@ -1,4 +1,5 @@
 import dataclasses
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -7,7 +8,12 @@ from tools.base import BaseTool
 
 
 class MiningMetalsPricesInput(BaseModel):
-    symbol: str = Field(description="One of COPPER, ALUMINUM, GOLD, SILVER, XAU, or XAG.")
+    symbol: Literal["COPPER", "ALUMINUM", "GOLD", "SILVER", "XAU", "XAG"] = Field(
+        description=(
+            "Commodity code — never a company/equity stock ticker. "
+            "One of COPPER, ALUMINUM, GOLD, SILVER, XAU, or XAG."
+        )
+    )
     interval: str = Field(default="monthly", description="daily, weekly, monthly, quarterly, or annual depending on symbol.")
     include_history: bool = Field(default=True, description="For GOLD/SILVER, use history when true and live spot when false.")
 

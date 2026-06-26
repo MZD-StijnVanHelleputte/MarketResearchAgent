@@ -16,19 +16,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
-_TOOL_DISPLAY_NAMES: dict[str, str] = {
-    "news_search": "NewsAPI",
-    "web_search": "WebSearch",
-    "search_sec_filings": "SEC EDGAR",
-    "get_mining_metals_prices": "Mining Metals (Alpha Vantage)",
-    "get_energy_cost_prices": "Energy Costs (Alpha Vantage)",
-    "get_broad_commodity_cycle": "Commodity Cycle (Alpha Vantage)",
-    "get_company_financials": "Financials (FMP)",
-    "get_equity_price": "Equity Prices",
-    "get_macro_indicator": "Macro (FRED)",
-    "masterdata_lookup": "Master Data",
-}
-
 _NODE_MESSAGES: dict[str, str] = {
     "understand":    "Analyzing your question and building research plans…",
     "collect":       "Collecting intelligence from data sources…",
@@ -72,6 +59,7 @@ async def start_chat(body: ChatRequest, background_tasks: BackgroundTasks) -> Ch
         "exec_summary": "",
         "run_start_time": time.time(),
         "paused_seconds": 0.0,
+        "timeout_prompt_count": 0,
     }
     await store.upsert_run(
         run_id, session_id, body.query, "running", "understand",
@@ -120,6 +108,18 @@ async def _persist_stream_event(event, run_id, session_id, query, store) -> None
                 api_call_count=output.get("api_call_count", 0),
                 total_tokens=output.get("total_tokens", 0),
             )
+
+
+def _manifest_to_sources(manifest: dict) -> list[dict]:
+    """Flatten the per-domain collection manifest into the Sources-panel list.
+
+    Entries are already produced in the enriched shape by graph._draft_source_entries
+    (typed datasets + failed tools), so this just concatenates them across domains.
+    """
+    sources: list[dict] = []
+    for items in (manifest or {}).values():
+        sources.extend(items or [])
+    return sources
 
 
 def _assemble_brief(chapters: list[dict]) -> str:
@@ -176,23 +176,9 @@ async def _handle_graph_result(
             extra_kwargs: dict = {}
             if gate_num == 2:
                 # Persist sources at Gate 2 so the right panel populates during review
-                sources = []
-                for domain, items in final.get("collection_manifest", {}).items():
-                    for item in items:
-                        title = item.get("title") or ""
-                        url = item.get("url") or None
-                        if not title and not url:
-                            continue
-                        tool_internal = item.get("_tool", "")
-                        tool_display = _TOOL_DISPLAY_NAMES.get(tool_internal, tool_internal or "unknown")
-                        sources.append({
-                            "domain": domain,
-                            "tool": tool_display,
-                            "title": title or "(untitled)",
-                            "url": url,
-                            "published_at": item.get("published_at"),
-                        })
-                extra_kwargs["sources"] = sources
+                extra_kwargs["sources"] = _manifest_to_sources(
+                    final.get("collection_manifest", {})
+                )
 
             await store.upsert_run(
                 run_id, session_id, query,
@@ -224,42 +210,59 @@ async def _handle_graph_result(
         )
         return True
 
-    sources = []
-    for domain, items in final.get("collection_manifest", {}).items():
-        for item in items:
-            title = item.get("title") or ""
-            url = item.get("url") or None
-            if not title and not url:
-                continue
-            tool_internal = item.get("_tool", "")
-            tool_display = _TOOL_DISPLAY_NAMES.get(tool_internal, tool_internal or "unknown")
-            sources.append({
-                "domain": domain,
-                "tool": tool_display,
-                "title": title or "(untitled)",
-                "url": url,
-                "published_at": item.get("published_at"),
-            })
+    sources = _manifest_to_sources(final.get("collection_manifest", {}))
 
     brief = _assemble_brief(final.get("synthesis_chapters", []))
 
     # Defensive backstop: a run can reach here with no exception raised yet still
-    # have produced nothing (e.g. a redirect/timeout self-loop that exits before
-    # synthesis finishes). Reporting status="done" in that case is misleading —
-    # the frontend trusts "done" and then 404s fetching a PDF that was never
-    # generated. Surface it as an honest, actionable error instead.
+    # have produced nothing committed to state — e.g. synthesize_node finished its
+    # work in local variables but was interrupted (Gate 3 / soft timeout) before
+    # its final return, then exited via a redirect/partial route that returned
+    # empty synthesis_chapters. Before giving up, try to reconstruct a brief from
+    # chapter_sets (committed by collect_node, so it survives that loss).
     if not (final.get("synthesis_chapters") or final.get("exec_summary") or brief):
-        await store.upsert_run(
-            run_id, session_id, query,
-            status="error",
-            stage=final_stage,
-            error=(
-                "The run ended without producing a report — it may have been "
-                "stopped or redirected before synthesis completed. Please retry."
-            ),
-            warnings=final.get("warnings", []),
-        )
-        return True
+        recovered = [
+            {"domain": draft.get("domain")
+                       or (key.split("::")[-1] if "::" in key else key),
+             "text": draft.get("text", "")}
+            for key, draft in (final.get("chapter_sets") or {}).items()
+            if (draft.get("text") or "").strip()
+        ]
+        recovered_brief = _assemble_brief(recovered)
+        if recovered_brief:
+            logger.warning(
+                "Run %s reached completion with no synthesis_chapters/exec_summary; "
+                "recovered a brief from %d chapter_sets (stage=%s).",
+                run_id, len(recovered), final_stage,
+            )
+            final["synthesis_chapters"] = recovered
+            final["warnings"] = [
+                *final.get("warnings", []),
+                "Report reconstructed from collected data: synthesis was "
+                "interrupted before it could finalize, so chapters are shown "
+                "without the executive summary or final polish.",
+            ]
+            brief = recovered_brief
+        else:
+            logger.warning(
+                "Run %s ended empty: stage=%s, synthesis_chapters=%s, "
+                "exec_summary=%s, chapter_sets=%s.",
+                run_id, final_stage,
+                bool(final.get("synthesis_chapters")),
+                bool(final.get("exec_summary")),
+                bool(final.get("chapter_sets")),
+            )
+            await store.upsert_run(
+                run_id, session_id, query,
+                status="error",
+                stage=final_stage,
+                error=(
+                    "The run ended without producing a report — it may have been "
+                    "stopped or redirected before synthesis completed. Please retry."
+                ),
+                warnings=final.get("warnings", []),
+            )
+            return True
 
     await store.upsert_run(
         run_id, session_id, query,
@@ -349,8 +352,14 @@ async def _resume_graph(
     if paused_at:
         pause_duration = max(0.0, time.time() - paused_at)
         snapshot = await graph_module.compiled.aget_state(config)
-        prior_paused = (snapshot.values or {}).get("paused_seconds", 0.0)
-        await graph_module.compiled.aupdate_state(config, {"paused_seconds": prior_paused + pause_duration})
+        values = snapshot.values or {}
+        prior_paused = values.get("paused_seconds", 0.0)
+        update = {"paused_seconds": prior_paused + pause_duration}
+        # Bump the rolling timeout threshold so the next soft-timeout prompt is
+        # due another soft_timeout_s later, instead of re-firing on the next node.
+        if existing_row.get("status") == "waiting_timeout_confirm" and decision == "approve":
+            update["timeout_prompt_count"] = values.get("timeout_prompt_count", 0) + 1
+        await graph_module.compiled.aupdate_state(config, update)
 
     async def _stream() -> None:
         async for event in graph_module.compiled.astream_events(Command(resume=decision), config, version="v2"):

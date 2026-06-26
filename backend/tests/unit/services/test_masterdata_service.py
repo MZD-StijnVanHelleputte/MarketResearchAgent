@@ -14,10 +14,10 @@ def test_get_equipment_nonempty(svc):
     assert len(equipment) > 0
 
 
-def test_get_sites_nonempty(svc):
-    sites = svc.get_sites()
-    assert isinstance(sites, list)
-    assert len(sites) > 0
+def test_get_operators_nonempty(svc):
+    operators = svc.get_operators()
+    assert isinstance(operators, list)
+    assert len(operators) > 0
 
 
 def test_get_competitors_nonempty(svc):
@@ -55,9 +55,27 @@ def test_all_competitors_have_website(svc):
         assert "website" in item and item["website"], f"Missing website for: {item.get('name')}"
 
 
-def test_all_sites_have_website(svc):
-    for item in svc.get_sites():
-        assert "website" in item and item["website"], f"Missing website for site: {item.get('name')}"
+def test_competitors_have_is_private_and_no_stale_revenue(svc):
+    for item in svc.get_competitors():
+        assert "is_private" in item, f"Missing is_private for: {item.get('name')}"
+        assert "revenue_usd_bn_fy2023" not in item, f"Stale revenue field on: {item.get('name')}"
+
+
+def test_all_operators_have_website(svc):
+    for item in svc.get_operators():
+        assert "website" in item and item["website"], f"Missing website for operator: {item.get('name')}"
+
+
+def test_operators_have_required_fields_and_private_flag(svc):
+    for item in svc.get_operators():
+        assert "is_private" in item, f"Missing is_private for: {item.get('name')}"
+        assert "primary_commodities" in item and item["primary_commodities"], \
+            f"Missing primary_commodities for: {item.get('name')}"
+        # Listed operators must carry a ticker; private ones must not.
+        if item["is_private"]:
+            assert item.get("ticker") is None, f"Private operator should have null ticker: {item.get('name')}"
+        else:
+            assert item.get("ticker"), f"Listed operator missing ticker: {item.get('name')}"
 
 
 def test_all_distributors_have_website(svc):
@@ -79,8 +97,8 @@ def test_lookup_competitors_all(svc):
     assert len(results) > 0
 
 
-def test_lookup_sites_all(svc):
-    results = svc.lookup("sites")
+def test_lookup_operators_all(svc):
+    results = svc.lookup("operators")
     assert isinstance(results, list)
     assert len(results) > 0
 

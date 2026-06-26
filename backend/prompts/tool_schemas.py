@@ -161,7 +161,11 @@ MINING_METALS_PRICES_SCHEMA: dict = {
             "properties": {
                 "symbol": {
                     "type": "string",
-                    "description": "One of COPPER, ALUMINUM, GOLD, SILVER, XAU, or XAG.",
+                    "enum": ["COPPER", "ALUMINUM", "GOLD", "SILVER", "XAU", "XAG"],
+                    "description": (
+                        "Commodity code — never a company/equity stock ticker. "
+                        "One of COPPER, ALUMINUM, GOLD, SILVER, XAU, or XAG."
+                    ),
                 },
                 "interval": {
                     "type": "string",
@@ -273,6 +277,34 @@ SEC_FILINGS_SCHEMA: dict = {
                 },
             },
             "required": ["query"],
+        },
+    },
+}
+
+TECHNICAL_REPORT_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "get_mine_technical_report",
+        "description": (
+            "Fetch the SEC S-K 1300 Technical Report Summary (Exhibit 96 of a mining "
+            "company's most recent 10-K/20-F) — mineral resource/reserve estimates, mine "
+            "life, and project economics for one company. Requires the company's stock "
+            "ticker; use mine_name to pick one project when the filer reports several."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {
+                    "type": "string",
+                    "description": "Stock ticker of the mining company, e.g. 'FCX', 'BHP'.",
+                },
+                "mine_name": {
+                    "type": "string",
+                    "description": "Optional mine/project name to disambiguate when the "
+                    "filer's 10-K includes multiple Exhibit 96 reports, e.g. 'Morenci'.",
+                },
+            },
+            "required": ["ticker"],
         },
     },
 }
@@ -513,7 +545,7 @@ MASTERDATA_LOOKUP_SCHEMA: dict = {
         "name": "masterdata_lookup",
         "description": (
             "Query Komatsu's internal master-data registry. "
-            "entity_type: distributors | competitors | sites | equipment | commodities. "
+            "entity_type: distributors | competitors | operators | equipment | commodities. "
             "Filter by region (e.g. 'Asia-Pacific') or keyword (name, country, ticker, product)."
         ),
         "parameters": {
@@ -521,8 +553,8 @@ MASTERDATA_LOOKUP_SCHEMA: dict = {
             "properties": {
                 "entity_type": {
                     "type": "string",
-                    "description": "One of: distributors, competitors, sites, equipment, commodities.",
-                    "enum": ["distributors", "competitors", "sites", "equipment", "commodities"],
+                    "description": "One of: distributors, competitors, operators, equipment, commodities.",
+                    "enum": ["distributors", "competitors", "operators", "equipment", "commodities"],
                 },
                 "region": {
                     "type": "string",
@@ -1415,6 +1447,7 @@ _ALL_TOOL_SCHEMAS: list[dict] = [
     EARNINGS_SURPRISES_SCHEMA,
     PRESS_RELEASES_SCHEMA,
     STOCK_SCREENER_SCHEMA,
+    TECHNICAL_REPORT_SCHEMA,
 ]
 
 

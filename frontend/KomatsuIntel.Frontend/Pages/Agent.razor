@@ -356,33 +356,59 @@
                 {
                     @foreach (var group in _sources.GroupBy(s => s.Domain))
                     {
-                        <div class="sources-domain-header">@group.Key</div>
-                        @foreach (var src in group)
+                        <div class="sources-domain-header">@PrettyDomain(group.Key)</div>
+                        @* Collected data first, attempted-but-failed tools last (in red). *@
+                        @foreach (var src in group.OrderBy(s => s.Failed))
                         {
-                            <div class="source-item">
-                                <MudIcon Icon="@ToolIcon(src.Tool)"
-                                         Style="font-size:0.85rem;color:#6B7280;flex-shrink:0;margin-top:2px;" />
-                                <div style="flex:1;min-width:0;">
-                                    <div style="font-size:0.78rem;font-weight:500;color:#374151;
-                                                overflow:hidden;text-overflow:ellipsis;
-                                                display:-webkit-box;-webkit-line-clamp:2;
-                                                -webkit-box-orient:vertical;">
-                                        @if (src.Url is not null)
+                            @if (src.Failed)
+                            {
+                                <div class="source-item">
+                                    <MudIcon Icon="@Icons.Material.Filled.ErrorOutline"
+                                             Style="font-size:0.85rem;color:#D32F2F;flex-shrink:0;margin-top:2px;" />
+                                    <div style="flex:1;min-width:0;">
+                                        <div style="font-size:0.78rem;font-weight:500;color:#D32F2F;">
+                                            Tried @src.Tool — failed
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(src.Reason))
                                         {
-                                            <a href="@src.Url" target="_blank"
-                                               style="color:#140A9A;text-decoration:none;">@src.Title</a>
+                                            <div style="font-size:0.7rem;color:#D32F2F;margin-top:1px;
+                                                        overflow:hidden;text-overflow:ellipsis;
+                                                        display:-webkit-box;-webkit-line-clamp:2;
+                                                        -webkit-box-orient:vertical;">
+                                                @src.Reason
+                                            </div>
                                         }
-                                        else
-                                        {
-                                            @src.Title
-                                        }
-                                    </div>
-                                    <div style="font-size:0.7rem;color:#9CA3AF;margin-top:1px;">
-                                        <span class="source-tool-chip @ToolChipClass(src.Tool)">@src.Tool</span>
-                                        @src.Timestamp
                                     </div>
                                 </div>
-                            </div>
+                            }
+                            else
+                            {
+                                <div class="source-item">
+                                    <MudIcon Icon="@ToolIcon(src.Tool)"
+                                             Style="font-size:0.85rem;color:#6B7280;flex-shrink:0;margin-top:2px;" />
+                                    <div style="flex:1;min-width:0;">
+                                        <div style="font-size:0.78rem;font-weight:500;color:#374151;
+                                                    overflow:hidden;text-overflow:ellipsis;
+                                                    display:-webkit-box;-webkit-line-clamp:2;
+                                                    -webkit-box-orient:vertical;">
+                                            @SourceLine(src)
+                                        </div>
+                                        <div style="font-size:0.7rem;color:#9CA3AF;margin-top:1px;
+                                                    display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                                            <span class="source-tool-chip @DataTypeChipClass(src.DataType)">
+                                                @DataTypeLabel(src.DataType)
+                                            </span>
+                                            @{ var cl = CountLabel(src); }
+                                            @if (cl.Length > 0)
+                                            {
+                                                <span style="font-weight:600;color:#6B7280;">@cl</span>
+                                            }
+                                            <span style="color:#C0C4CC;">·</span>
+                                            <span>@src.Tool</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
                         }
                     }
                 }
@@ -460,13 +486,17 @@
         _                  => Icons.Material.Outlined.Description,
     };
 
-    private static string ToolChipClass(string tool) => tool switch
+    private static string PrettyDomain(string domain) => domain switch
     {
-        "NewsAPI"          => "chip-news",
-        "WebSearch"        => "chip-web",
-        "SEC EDGAR"        => "chip-sec",
-        "Commodities Feed" => "chip-commodity",
-        _                  => "chip-default",
+        "mining_projects"  => "Mining Projects",
+        "distributors"     => "Distributors",
+        "commodities"      => "Commodities",
+        "macro_geopolitics"=> "Macro & Geopolitics",
+        "customers"        => "Customers",
+        "general_search"   => "General Market Search",
+        "competition"      => "Competition",
+        _ => string.Join(' ', domain.Split('_')
+                .Select(w => w.Length == 0 ? w : char.ToUpper(w[0]) + w[1..])),
     };
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
@@ -479,9 +509,46 @@
         _messages.Add(new ChatMessage(role, content,
             DateTime.Now.ToString("HH:mm"), meta));
 
-    private void AddSource(string domain, string tool, string title, string? url = null) =>
-        _sources.Add(new SourceItem(domain, tool, title, url,
-            DateTime.Now.ToString("HH:mm")));
+    private void AddSource(SourceDto src) =>
+        _sources.Add(new SourceItem(
+            src.Domain, src.Tool, src.Title, src.Url,
+            DateTime.Now.ToString("HH:mm"),
+            src.DataType, src.Label, src.Count, src.Failed, src.Reason));
+
+    // ── Source presentation helpers ────────────────────────────────────────
+    private static string DataTypeLabel(string? dt) => dt switch
+    {
+        "numeric_series" => "numeric series",
+        "financials"     => "financials",
+        "articles"       => "news",
+        "web_results"    => "web results",
+        "filings"        => "filings",
+        "document"       => "document",
+        "failed"         => "failed",
+        _                => "data",
+    };
+
+    private static string CountLabel(SourceItem s) => s.DataType switch
+    {
+        _ when s.Count <= 0 => "",
+        "numeric_series" or "financials" => $"{s.Count} rows",
+        "articles"    => $"{s.Count} articles",
+        "web_results" => $"{s.Count} results",
+        "filings"     => $"{s.Count} filings",
+        _             => $"{s.Count}",
+    };
+
+    private static string DataTypeChipClass(string? dt) => dt switch
+    {
+        "numeric_series" or "financials" => "chip-commodity",
+        "articles"    => "chip-news",
+        "web_results" => "chip-web",
+        "filings"     => "chip-sec",
+        _             => "chip-default",
+    };
+
+    private static string SourceLine(SourceItem s) =>
+        string.IsNullOrWhiteSpace(s.Label) ? s.Title : s.Label;
 
     private async Task ScrollToBottom()
     {
@@ -634,21 +701,53 @@
 
     // ── Polling ─────────────────────────────────────────────────────────────
 
-    private static readonly string[] _fillerThoughts =
+    // Filler thoughts shown when the backend hasn't reported new progress in a
+    // while. Keyed by stage so the idle animation never describes the wrong phase
+    // (e.g. "drafting plans" while synthesizing, or "writing chapters" while still
+    // collecting). Falls back to the generic pool for unknown/early stages.
+    private static readonly Dictionary<string, string[]> _fillerThoughtsByStage = new()
     {
-        "Digging for answers…",
-        "Moving some data…",
-        "Crunching the numbers…",
-        "Surveying the terrain…",
-        "Sifting through the data pile…",
-        "Consulting the field reports…",
-        "Tightening a few bolts on the analysis…",
-        "Thinking…",
+        ["understand"] = new[]
+        {
+            "Mapping out the research plan…",
+            "Weighing which angles matter most…",
+            "Lining up the questions to chase…",
+            "Thinking…",
+        },
+        ["collect"] = new[]
+        {
+            "Digging for answers…",
+            "Moving some data…",
+            "Surveying the terrain…",
+            "Sifting through the data pile…",
+            "Consulting the field reports…",
+            "Thinking…",
+        },
+        ["synthesize"] = new[]
+        {
+            "Crunching the numbers…",
+            "Drawing the threads together…",
+            "Writing up the findings…",
+            "Tightening a few bolts on the analysis…",
+            "Thinking…",
+        },
     };
+
+    private static readonly string[] _fillerThoughtsGeneric =
+    {
+        "Thinking…",
+        "Working on it…",
+    };
+
+    private static string[] FillerThoughtsFor(string? stage) =>
+        stage is not null && _fillerThoughtsByStage.TryGetValue(stage, out var pool)
+            ? pool
+            : _fillerThoughtsGeneric;
 
     private async Task PollUntilComplete(CancellationToken ct)
     {
         string? lastRealThought = null;
+        string? lastStage = null;
         int staleTicks = 0;
         int fillerIndex = -1;
         const int StaleThreshold = 2; // ticks (~4s at 2s/poll) before swapping to filler
@@ -675,8 +774,20 @@
                 _            => _currentStage,
             };
 
+            // When the phase changes, drop any lingering thought from the previous
+            // stage so a stale label (e.g. a collect-phase "…retrying…") can't bleed
+            // into the next phase and contradict the real stage.
+            if (run.Stage != lastStage)
+            {
+                lastStage       = run.Stage;
+                lastRealThought = null;
+                staleTicks      = 0;
+                fillerIndex     = -1;
+            }
+
             // Update animated thought from latest activity log entry; fall back to
-            // rotating filler text if the backend hasn't reported new progress in a while.
+            // rotating phase-appropriate filler text if the backend hasn't reported
+            // new progress in a while.
             var latest = run.ActivityLog is { Count: > 0 } ? run.ActivityLog[^1] : null;
             if (run.ActivityLog is { Count: > 0 })
             {
@@ -695,8 +806,9 @@
                 staleTicks++;
                 if (staleTicks >= StaleThreshold && staleTicks % StaleThreshold == 0)
                 {
-                    fillerIndex     = (fillerIndex + 1) % _fillerThoughts.Length;
-                    _currentThought = _fillerThoughts[fillerIndex];
+                    var filler      = FillerThoughtsFor(run.Stage);
+                    fillerIndex     = (fillerIndex + 1) % filler.Length;
+                    _currentThought = filler[fillerIndex];
                 }
             }
 
@@ -704,7 +816,7 @@
             if (run.Sources is not null && run.Sources.Count > _seenSourcesCount)
             {
                 foreach (var src in run.Sources.Skip(_seenSourcesCount))
-                    AddSource(src.Domain, src.Tool, src.Title, src.Url);
+                    AddSource(src);
                 _seenSourcesCount = run.Sources.Count;
                 await ScrollToBottom();
             }
@@ -913,5 +1025,8 @@
     // ── Local models ───────────────────────────────────────────────────────
 
     private record ChatMessage(string Role, string Content, string Timestamp, string? Meta = null);
-    private record SourceItem(string Domain, string Tool, string Title, string? Url, string Timestamp);
+    private record SourceItem(
+        string Domain, string Tool, string Title, string? Url, string Timestamp,
+        string? DataType = null, string? Label = null, int Count = 0,
+        bool Failed = false, string? Reason = null);
 }

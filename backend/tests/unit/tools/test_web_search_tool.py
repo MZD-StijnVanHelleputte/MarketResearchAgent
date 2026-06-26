@@ -28,7 +28,11 @@ async def test_run_delegates_to_service():
     svc = _mock_service()
     tool = WebSearchTool(service=svc)
     await tool.run(query="copper price", max_results=3)
-    svc.search.assert_called_once_with(query="copper price", max_results=3)
+    # The tool forwards the full Tavily param set; assert the key args are present.
+    svc.search.assert_called_once()
+    kwargs = svc.search.call_args.kwargs
+    assert kwargs["query"] == "copper price"
+    assert kwargs["max_results"] == 3
 
 
 def test_tool_metadata():

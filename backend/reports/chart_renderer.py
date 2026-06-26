@@ -68,6 +68,9 @@ def _render(dataset: dict) -> bytes:
 
 
 def _render_line(ax, columns: list, rows: list[list], date_col: int, numeric_idx: list[int]) -> None:
+    # Always plot oldest -> newest left to right, regardless of the order the
+    # underlying data source returned rows in.
+    rows = sorted(rows, key=lambda r: r[date_col])
     x = [r[date_col] for r in rows]
     plot_idx = [i for i in numeric_idx if i != date_col]
     # Drop a volume-like column when other price/value columns exist — its scale

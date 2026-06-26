@@ -1,13 +1,56 @@
 """Tests for understand_node — now runs the full ToT pipeline.
 
-Patches PlanProposer, GroundingAgent, and score_and_prune so the test
-runs without real LLM calls or CrewAI.
+Patches ResearchAgent, PlanProposer, GroundingAgent, score_and_prune, and
+PlanMerger so the test runs without real LLM calls or CrewAI. The node now
+merges the survivors into a single ConsolidatedPlan and returns plans=[that].
 """
+import contextlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.graph import understand_node, AgentState
-from core.tot.schemas import CandidatePlan
+from core.tot.schemas import CandidatePlan, ConsolidatedPlan, ResearchContext
+
+
+def _consolidated() -> ConsolidatedPlan:
+    """The single merged plan understand_node now produces from the survivors."""
+    return ConsolidatedPlan(
+        plan_id="consolidated-test-run",
+        source_plan_ids=["plan_001", "plan_002", "plan_003"],
+        domains_active=["competition", "general_search"],
+        entity_manifest={},
+        planned_tool_calls=[],
+        research_findings="",
+        rationale="merged",
+        gap_report="",
+        feasibility_score=0.85,
+        quality_score=0.80,
+    )
+
+
+@contextlib.contextmanager
+def _patched_pipeline(all_plans, *, grounding_error=None):
+    """Patch the whole ToT pipeline so understand_node runs offline and fast."""
+    with patch("core.graph.ResearchAgent") as MockResearch, \
+         patch("core.graph.PlanProposer") as MockProposer, \
+         patch("core.graph.GroundingAgent") as MockGrounder, \
+         patch("core.graph.score_and_prune", return_value=all_plans), \
+         patch("core.graph.PlanMerger") as MockMerger, \
+         patch("core.graph.Retriever"), \
+         patch("core.graph.write_plan_direct") as mock_write, \
+         patch("core.graph.clear_plans"):
+        MockResearch.return_value.run = AsyncMock(return_value=ResearchContext())
+        MockResearch.return_value.last_usage = {}
+        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
+        MockProposer.return_value.last_usage = {}
+        if grounding_error is not None:
+            MockGrounder.return_value.run = MagicMock(side_effect=grounding_error)
+        else:
+            MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+        MockGrounder.return_value.last_usage = {}
+        MockMerger.return_value.merge = AsyncMock(return_value=_consolidated())
+        MockMerger.return_value.last_usage = {}
+        yield mock_write
 
 
 def _base_state(**overrides) -> AgentState:
@@ -63,50 +106,33 @@ def _all_seven_plans() -> list[CandidatePlan]:
 @pytest.mark.asyncio
 async def test_understand_node_happy_path():
     all_plans = _all_seven_plans()
-    with patch("core.graph.PlanProposer") as MockProposer, \
-         patch("core.graph.GroundingAgent") as MockGrounder, \
-         patch("core.graph.score_and_prune", return_value=all_plans), \
-         patch("core.graph.Retriever"), \
-         patch("core.graph.write_plan_direct"), \
-         patch("core.graph.clear_plans"):
-        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
-        MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+    with _patched_pipeline(all_plans):
         result = await understand_node(_base_state())
 
     assert result["stage"] == "collect"
-    assert len(result["plans"]) == 3
+    # Survivors are merged into a single consolidated plan.
+    assert len(result["plans"]) == 1
+    assert result["plans"][0]["plan_id"] == "consolidated-test-run"
 
 
 @pytest.mark.asyncio
-async def test_understand_node_stores_survivor_dicts():
+async def test_understand_node_stores_consolidated_plan_dict():
     all_plans = _all_seven_plans()
-    with patch("core.graph.PlanProposer") as MockProposer, \
-         patch("core.graph.GroundingAgent") as MockGrounder, \
-         patch("core.graph.score_and_prune", return_value=all_plans), \
-         patch("core.graph.Retriever"), \
-         patch("core.graph.write_plan_direct"), \
-         patch("core.graph.clear_plans"):
-        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
-        MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+    with _patched_pipeline(all_plans):
         result = await understand_node(_base_state())
 
-    for plan_dict in result["plans"]:
-        assert isinstance(plan_dict, dict)
-        assert "plan_id" in plan_dict
-        assert plan_dict["is_survivor"] is True
+    assert len(result["plans"]) == 1
+    plan_dict = result["plans"][0]
+    assert isinstance(plan_dict, dict)
+    assert "plan_id" in plan_dict
+    # The merged plan records which survivors fed it.
+    assert plan_dict["source_plan_ids"] == ["plan_001", "plan_002", "plan_003"]
 
 
 @pytest.mark.asyncio
 async def test_understand_node_writes_all_plans_to_mcp():
     all_plans = _all_seven_plans()
-    with patch("core.graph.PlanProposer") as MockProposer, \
-         patch("core.graph.GroundingAgent") as MockGrounder, \
-         patch("core.graph.score_and_prune", return_value=all_plans), \
-         patch("core.graph.Retriever"), \
-         patch("core.graph.write_plan_direct") as mock_write, \
-         patch("core.graph.clear_plans"):
-        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
-        MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+    with _patched_pipeline(all_plans) as mock_write:
         await understand_node(_base_state())
 
     assert mock_write.call_count == 7
@@ -114,9 +140,9 @@ async def test_understand_node_writes_all_plans_to_mcp():
 
 @pytest.mark.asyncio
 async def test_understand_node_proposer_failure_returns_error():
-    with patch("core.graph.PlanProposer") as MockProposer, \
-         patch("core.graph.Retriever"), \
-         patch("core.graph.clear_plans"):
+    all_plans = _all_seven_plans()
+    with _patched_pipeline(all_plans), \
+         patch("core.graph.PlanProposer") as MockProposer:
         MockProposer.return_value.propose = AsyncMock(
             side_effect=ValueError("LLM returned bad JSON")
         )
@@ -128,17 +154,10 @@ async def test_understand_node_proposer_failure_returns_error():
 
 @pytest.mark.asyncio
 async def test_understand_node_grounding_failure_falls_back():
-    """If GroundingAgent fails, understand_node should use depth-1 plans and continue."""
+    """If GroundingAgent fails, understand_node uses depth-1 plans and still merges."""
     all_plans = _all_seven_plans()
-    with patch("core.graph.PlanProposer") as MockProposer, \
-         patch("core.graph.GroundingAgent") as MockGrounder, \
-         patch("core.graph.score_and_prune", return_value=all_plans), \
-         patch("core.graph.Retriever"), \
-         patch("core.graph.write_plan_direct"), \
-         patch("core.graph.clear_plans"):
-        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
-        MockGrounder.return_value.run = MagicMock(side_effect=RuntimeError("CrewAI timeout"))
+    with _patched_pipeline(all_plans, grounding_error=RuntimeError("CrewAI timeout")):
         result = await understand_node(_base_state())
 
     assert result["stage"] == "collect"
-    assert len(result["plans"]) == 3
+    assert len(result["plans"]) == 1

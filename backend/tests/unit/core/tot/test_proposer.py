@@ -75,13 +75,18 @@ async def test_proposer_sets_depth_1():
 
 
 @pytest.mark.asyncio
-async def test_proposer_raises_if_fewer_than_branching_factor():
+async def test_proposer_proceeds_with_fewer_than_branching_factor(caplog):
+    # The proposer is lenient: too few plans logs a warning and proceeds with what
+    # the LLM returned rather than aborting the run.
     only_three = json.dumps({"plans": [_make_raw_plan(i + 1) for i in range(3)]})
     mock_response = LLMResponse(content=only_three)
     with patch("core.tot.proposer.LLMClient") as MockLLM:
         MockLLM.return_value.acomplete = AsyncMock(return_value=mock_response)
-        with pytest.raises(ValueError, match="expected 7"):
-            await PlanProposer().propose("test", [])
+        with caplog.at_level("WARNING"):
+            candidates = await PlanProposer().propose("test", [])
+
+    assert len(candidates) == 3
+    assert "expected 7" in caplog.text
 
 
 @pytest.mark.asyncio

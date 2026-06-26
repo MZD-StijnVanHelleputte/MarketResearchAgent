@@ -185,7 +185,7 @@ public record CandidatePlan(
 
 public record PlanReviewData(string RunId, List<CandidatePlan> Plans);
 
-// Gate 2 — gathered-data review (actual data collected per domain)
+// Gate 2 — gathered-data review (actual data collected per domain → entity → dataset)
 public record DatasetItem(string? Title, string? Url, string? Snippet);
 public record DomainDataset(
     string Tool,
@@ -195,8 +195,16 @@ public record DomainDataset(
     List<List<string>>? Rows,
     int RowCount,
     string? Summary,
-    List<DatasetItem>? Items);
-public record DomainData(string Domain, List<DomainDataset> Datasets, List<string> Errors);
+    List<DatasetItem>? Items,
+    string? DataType = null,           // "numeric_series" | "financials" | "articles" | …
+    string? Label = null,              // entity hint, e.g. "COPPER", "CAT FY"
+    int Count = 0);                    // total rows/items collected
+public record FailedTool(string Tool, string ToolDisplay, string Reason);
+public record EntityGroup(string Label, List<DomainDataset> Datasets);
+public record DomainData(
+    string Domain,
+    List<EntityGroup> Entities,
+    List<FailedTool> FailedTools);
 public record GatheredDataView(string RunId, List<DomainData> Domains);
 
 // Gate 3 — brief review
@@ -215,7 +223,17 @@ public record PreferencesResponse(Dictionary<string, object>? Preferences);
 public record HealthResponse(string Status, string? Version);
 
 // Run status polling (Phase 2)
-public record SourceDto(string Domain, string Tool, string Title, string? Url, string? PublishedAt);
+public record SourceDto(
+    string Domain,
+    string Tool,
+    string Title,
+    string? Url,
+    string? PublishedAt,
+    string? DataType = null,            // "numeric_series" | "articles" | … | "failed"
+    string? Label = null,
+    int Count = 0,
+    bool Failed = false,
+    string? Reason = null);
 public record RunStatus(string Status, string Stage, string? Brief, string? Error, List<SourceDto>? Sources, JsonElement? GateData = null, string? StatusMessage = null, List<string>? ActivityLog = null, string? ExecSummary = null, List<string>? Warnings = null);
 
 // Test runner

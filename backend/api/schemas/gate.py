@@ -66,7 +66,7 @@ class ClarificationRequest(BaseModel):
 
 class ClarificationAnswer(BaseModel):
     equipment_models: list[str] = []
-    mine_sites: list[str] = []
+    operators: list[str] = []
     competitor_tickers: list[str] = []
 
 

@@ -5,8 +5,9 @@ from tools.company_financials_tool import CompanyFinancialsTool
 
 FINANCIALS = CompanyFinancials(
     ticker="CAT", name="Caterpillar Inc",
+    price_usd=380.0, market_cap_usd=150e9,
     revenue_usd=67e9, net_income_usd=6e9, capex_usd=2e9,
-    market_cap_usd=150e9, pe_ratio=15.2, date="2024-12-31",
+    pe_ratio=15.2, currency="USD", industry="Machinery", date="2024-12-31",
 )
 
 

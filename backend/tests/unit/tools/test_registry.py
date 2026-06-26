@@ -57,8 +57,10 @@ def test_domain_tools_reference_new_news_tools():
     assert "news_sources" in registry.DOMAIN_TOOLS["general_search"]
 
 
-def test_news_search_not_in_understand_or_synthesize():
-    assert not any(isinstance(t, NewsSearchTool) for t in registry.UNDERSTAND_TOOLS)
+def test_news_search_in_understand_not_synthesize():
+    # news_search frames plans with recent headlines during Understand, but is not
+    # part of the Synthesize stage (which only reads knowledge + episodic memory).
+    assert any(isinstance(t, NewsSearchTool) for t in registry.UNDERSTAND_TOOLS)
     assert not any(isinstance(t, NewsSearchTool) for t in registry.SYNTHESIZE_TOOLS)
 
 

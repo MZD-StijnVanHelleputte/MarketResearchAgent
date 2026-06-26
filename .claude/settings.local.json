@@ -8,7 +8,8 @@
       "Bash(pip install *)",
       "Skill(run)",
       "Skill(run:*)",
-      "Bash(python3 -m pytest tests/unit/services/test_masterdata_service.py -v)"
+      "Bash(python3 -m pytest tests/unit/services/test_masterdata_service.py -v)",
+      "Bash(python -m pytest tests/unit -q)"
     ]
   }
 }

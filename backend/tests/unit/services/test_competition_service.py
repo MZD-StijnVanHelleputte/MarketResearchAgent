@@ -3,12 +3,18 @@ from unittest.mock import AsyncMock, MagicMock
 from clients.base_http_client import ClientError
 from services.competition_service import CompetitionService, CompanyFinancials, Filing, ServiceError
 
-PROFILE = [{"companyName": "Caterpillar Inc", "mktCap": 150e9, "pe": 15.2, "date": "2024-12-31"}]
-METRICS = [{"revenueTTM": 67e9, "netIncomeTTM": 6e9, "capexTTM": 2e9}]
+# FMP /stable/profile and /stable/key-metrics-ttm response shapes.
+PROFILE = [{"companyName": "Caterpillar Inc", "marketCap": 150e9, "price": 380.0,
+            "currency": "USD", "industry": "Machinery"}]
+METRICS = [{"revenueTTM": 67e9, "netIncomeTTM": 6e9, "capexTTM": 2e9, "peRatioTTM": 15.2}]
+# EDGAR full-text-search hit shape.
 EDGAR_HITS = {
     "hits": {
         "hits": [
-            {"_source": {"entity_name": "Caterpillar Inc", "form_type": "10-K", "file_date": "2024-02-14", "period_of_report": "2023-12-31"}, "highlight": {}}
+            {"_source": {"display_names": ["CATERPILLAR INC (CAT) (CIK 0000018230)"],
+                         "form": "10-K", "file_date": "2024-02-14",
+                         "period_ending": "2023-12-31", "file_type": "10-K"},
+             "_id": "0000018230-24-000012", "highlight": {}}
         ]
     }
 }
@@ -35,6 +41,7 @@ async def test_get_financials_returns_dataclass():
     assert result.ticker == "CAT"
     assert result.name == "Caterpillar Inc"
     assert result.market_cap_usd == 150e9
+    assert result.price_usd == 380.0
     assert result.pe_ratio == 15.2
 
 
@@ -44,7 +51,7 @@ async def test_get_filings_returns_list():
     result = await svc.get_filings("Caterpillar mining")
     assert len(result) == 1
     assert isinstance(result[0], Filing)
-    assert result[0].entity_name == "Caterpillar Inc"
+    assert result[0].entity_name == "CATERPILLAR INC (CAT)"
     assert result[0].form_type == "10-K"
 
 

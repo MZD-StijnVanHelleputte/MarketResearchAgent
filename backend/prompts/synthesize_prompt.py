@@ -9,6 +9,10 @@ Rules:
 - Cover the key signals from each active domain in 1-2 sentences each.
 - Close with a recommended priority action or watch item.
 - Do NOT repeat domain headings or use bullet points — write flowing prose.
+- Always refer to companies by their full name (e.g. "Hitachi Construction Machinery", \
+"XCMG Group"), never by a bare stock ticker or numeric exchange code (e.g. do not write \
+"6305.T" or "000425.SZ" in place of the name). A ticker may appear once in parentheses \
+after the first mention if useful, but must never substitute for the name.
 - Target exactly {min_words}–{max_words} words.
 """
 
@@ -60,6 +64,10 @@ do not just describe the entity in the abstract.
 below this text — ground your interpretation in that data (trends, comparisons, implications \
 for Komatsu and for the research question), not on re-listing every individual figure already \
 visible there.
+7. Always refer to {subdomain_label} and any other company mentioned by its full name, never \
+by a bare stock ticker or numeric exchange code (e.g. do not write "6305.T" or "000425.SZ" in \
+place of the name). A ticker may appear once in parentheses after the first mention if useful, \
+but must never substitute for the name.
 
 Respond with ONLY a valid JSON object with keys: domain, subdomain_label, text.
 """
@@ -91,6 +99,10 @@ new ones.
 6. Note any material contradictions across entities.
 7. Each entity's accompanying chart/table is shown separately in this chapter — interpret and \
 compare the data here rather than re-listing every individual figure already shown there.
+8. Always refer to companies by their full name, never by a bare stock ticker or numeric \
+exchange code (e.g. do not write "6305.T" or "000425.SZ" in place of the name). A ticker may \
+appear once in parentheses after the first mention if useful, but must never substitute for \
+the name.
 
 Respond with ONLY a valid JSON object with keys: domain, text.
 """
@@ -102,7 +114,7 @@ You are a market-intelligence analyst identifying the distinct themes covered in
 
 Chapter evidence (raw text, citations, and collected data):
 {evidence_text}
-
+{hint}
 Identify between 2 and 4 distinct, substantive themes/topics actually present in this \
 evidence — each should be specific enough to support its own focused analysis (e.g. \
 "Tariff policy on imported steel" rather than just "Trade"). Do NOT invent themes that \
@@ -132,6 +144,10 @@ Rules:
 - Draw conclusions and implications; do not merely describe what the articles say.
 - Ground every claim in the source data; do not invent facts.
 - Flag contradictions or thin evidence explicitly.
+- Always refer to companies by their full name, never by a bare stock ticker or numeric \
+exchange code (e.g. do not write "6305.T" or "000425.SZ" in place of the name). A ticker may \
+appear once in parentheses after the first mention if useful, but must never substitute for \
+the name.
 - Target 200–300 words.
 """
 

@@ -49,6 +49,37 @@ async def test_empty_final_state_persists_error_not_done(tmp_db):
 
 
 @pytest.mark.asyncio
+async def test_empty_synthesis_recovers_brief_from_chapter_sets(tmp_db):
+    """When synthesis was interrupted before committing chapters but chapter_sets
+    survives (committed by collect_node), reconstruct a brief instead of erroring."""
+    final = {
+        "stage": "synthesize",
+        "synthesis_chapters": [],
+        "exec_summary": "",
+        "chapter_sets": {
+            "plan_a::commodities": {"domain": "commodities", "text": "Copper demand is rising."},
+            "plan_a::competition": {"domain": "competition", "text": "Rivals are expanding."},
+        },
+        "warnings": [],
+    }
+    with patch(
+        "core.graph.compiled.aget_state",
+        AsyncMock(return_value=_no_pending_interrupt_snapshot()),
+    ), patch("reports.assembler.Assembler.assemble"), patch(
+        "reports.pdf_generator.PdfGenerator.generate"
+    ):
+        result = await _handle_graph_result(final, "run_recover", "sess1", "copper outlook")
+
+    assert result is True
+    run = await SqliteStore().get_run("run_recover")
+    assert run["status"] == "done"
+    assert not run.get("error")
+    assert "Copper demand is rising." in run["brief"]
+    assert "Rivals are expanding." in run["brief"]
+    assert any("reconstructed" in w.lower() for w in run.get("warnings", []))
+
+
+@pytest.mark.asyncio
 async def test_real_content_still_persists_done(tmp_db):
     final = {
         "stage": "done",

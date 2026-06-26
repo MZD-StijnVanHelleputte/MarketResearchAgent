@@ -11,6 +11,7 @@ class FredClient(BaseHttpClient):
             base_url=settings.fred_base_url,
             api_key="",
             timeout_s=settings.fred_timeout_s,
+            max_retries=settings.fred_max_retries,
             rate_limit_per_min=settings.fred_rate_limit_per_min,
         )
         self._api_key = settings.fred_api_key
@@ -155,3 +156,17 @@ class FredClient(BaseHttpClient):
             "limit": limit,
             "filter_value": filter_value,
         })
+
+
+_shared_client: FredClient | None = None
+
+
+def get_fred_client() -> FredClient:
+    """Return a process-wide shared FredClient so all FRED tools share one httpx
+    connection pool and one token-bucket rate limiter (FRED's real limit is global,
+    ~120 req/min). Per-tool clients would each get their own bucket and collectively
+    blow past the limit under parallel domain agents."""
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = FredClient()
+    return _shared_client

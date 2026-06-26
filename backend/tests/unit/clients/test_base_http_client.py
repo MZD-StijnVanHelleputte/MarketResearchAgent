@@ -5,13 +5,28 @@ import httpx
 from clients.base_http_client import BaseHttpClient, ClientError
 
 
-def _make_response(status_code: int, json_body: dict | None = None, text: str = "") -> MagicMock:
+def _make_response(
+    status_code: int, json_body: dict | None = None, text: str = "", content: bytes = b""
+) -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
     resp.is_error = status_code >= 400
     resp.text = text
     resp.json.return_value = json_body or {}
+    resp.content = content
     return resp
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_returns_raw_content_not_json():
+    client = BaseHttpClient(base_url="https://example.com", rate_limit_per_min=1000)
+    mock_resp = _make_response(200, content=b"%PDF-1.4 binary data")
+
+    with patch.object(client._client, "get", new=AsyncMock(return_value=mock_resp)):
+        result = await client.get_bytes("/doc.pdf")
+
+    assert result == b"%PDF-1.4 binary data"
+    mock_resp.json.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -69,6 +84,57 @@ async def test_get_exhausts_retries_and_raises():
                 await client.get("/test")
 
     assert exc_info.value.status == 503
+
+
+@pytest.mark.asyncio
+async def test_get_retries_on_timeout_then_succeeds():
+    """A transient httpx timeout must be retried, not propagated immediately."""
+    client = BaseHttpClient(base_url="https://example.com", max_retries=2, rate_limit_per_min=1000)
+    ok = _make_response(200, {"data": "good"})
+    call_count = 0
+
+    async def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise httpx.ReadTimeout("timed out")
+        return ok
+
+    with patch.object(client._client, "get", new=AsyncMock(side_effect=side_effect)):
+        with patch("clients.base_http_client.asyncio.sleep", new=AsyncMock()):
+            result = await client.get("/test")
+
+    assert result == {"data": "good"}
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_transport_error_exhausts_retries_raises_client_error():
+    """A persistent transport error surfaces as ClientError(599) after exhausting retries."""
+    client = BaseHttpClient(base_url="https://example.com", max_retries=1, rate_limit_per_min=1000)
+
+    with patch.object(client._client, "get", new=AsyncMock(side_effect=httpx.ConnectError("boom"))):
+        with patch("clients.base_http_client.asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(ClientError) as exc_info:
+                await client.get("/test")
+
+    assert exc_info.value.status == 599
+
+
+@pytest.mark.asyncio
+async def test_get_does_not_retry_permanent_400():
+    """A permanent 400 must fail immediately without retrying."""
+    client = BaseHttpClient(base_url="https://example.com", max_retries=3, rate_limit_per_min=1000)
+    bad = _make_response(400, text="Bad Request. The series does not exist.")
+    mock_get = AsyncMock(return_value=bad)
+
+    with patch.object(client._client, "get", new=mock_get):
+        with patch("clients.base_http_client.asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(ClientError) as exc_info:
+                await client.get("/test")
+
+    assert exc_info.value.status == 400
+    assert mock_get.call_count == 1  # no retries on a permanent client error
 
 
 @pytest.mark.asyncio

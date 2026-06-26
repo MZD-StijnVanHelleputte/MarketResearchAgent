@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB
+_MAX_UPLOAD_BYTES = 250 * 1024 * 1024  # 250MB
 
 # Conversion and chunking run fully concurrently across files (local CPU work).
 # Only the embedding + store step is serialized, since that's the part that
@@ -92,7 +92,7 @@ async def upload_knowledge(
     """
     raw = await file.read()
     if len(raw) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 50MB upload limit.")
+        raise HTTPException(status_code=413, detail="File too big to be uploaded (max 250MB).")
 
     job = knowledge_job_store.create(file.filename, domain)
     background_tasks.add_task(

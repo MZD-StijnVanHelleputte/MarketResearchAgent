@@ -310,6 +310,8 @@
     private bool     _deleting;
     private string   _selectedDomain = "mining";
 
+    private const long MaxUploadBytes = 250L * 1024 * 1024;
+
     private class UploadItem
     {
         public required string FileName { get; init; }
@@ -358,10 +360,30 @@
             _uploadItems.Add(item);
             StateHasChanged();
 
-            using var stream = file.OpenReadStream(maxAllowedSize: 50_000_000);
-            using var buffer = new MemoryStream();
-            await stream.CopyToAsync(buffer);
-            _ = ProcessUpload(item, buffer.ToArray());
+            if (file.Size > MaxUploadBytes)
+            {
+                item.Stage = "error";
+                item.Error = "File too big to be uploaded (max 250MB).";
+                StateHasChanged();
+                continue;
+            }
+
+            byte[] bytes;
+            try
+            {
+                using var stream = file.OpenReadStream(maxAllowedSize: MaxUploadBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                bytes = buffer.ToArray();
+            }
+            catch (Exception ex)
+            {
+                item.Stage = "error";
+                item.Error = ex.Message;
+                StateHasChanged();
+                continue;
+            }
+            _ = ProcessUpload(item, bytes);
         }
     }
 

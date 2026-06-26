@@ -1,4 +1,6 @@
+import asyncio
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -53,6 +55,29 @@ async def test_fallback_on_crew_failure():
         draft = await CommoditiesAgent().run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.text
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_run_concurrently():
+    """6 tool calls bounded to 3-way concurrency should take ~2 delay-windows, not 6."""
+    delay = 0.05
+    plan = _make_plan([f"tool_{i}" for i in range(6)])
+
+    async def _slow_route(_name, _args):
+        await asyncio.sleep(delay)
+        return {"symbol": "COPPER", "latest": {"value": 4.12}}
+
+    with patch("agents.base_domain_agent.async_route", new=_slow_route), \
+         patch("agents.base_domain_agent.Agent"), \
+         patch("agents.base_domain_agent.Task"), \
+         patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
+         patch("agents.base_domain_agent.LLM"):
+        start = time.monotonic()
+        await CommoditiesAgent().run(plan, "run_001")
+        elapsed = time.monotonic() - start
+
+    # Sequential execution would take ~6*delay; bounded concurrency (3) takes ~2*delay.
+    assert elapsed < delay * 4
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
+import pydantic
 import pytest
 
 from services.commodity_service import CommodityObservation, CommodityResult
@@ -44,3 +45,12 @@ def test_tool_metadata():
     tool = MiningMetalsPricesTool()
     assert tool.name == "get_mining_metals_prices"
     assert "alpha vantage" in tool.description.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_company_ticker_before_hitting_service():
+    svc = _mock_service()
+    tool = MiningMetalsPricesTool(service=svc)
+    with pytest.raises(pydantic.ValidationError):
+        await tool.run(symbol="BHP", interval="monthly")
+    svc.get_mining_metals_prices.assert_not_called()

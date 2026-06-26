@@ -14,12 +14,15 @@ class MasterdataLookupTool(BaseTool):
     name = "masterdata_lookup"
     description = (
         "Query Komatsu's internal master-data registry. "
-        "entity_type must be one of: distributors, competitors, sites, equipment, commodities. "
+        "entity_type must be one of: distributors, competitors, operators, equipment, commodities. "
         "Optionally filter by region (e.g. 'Asia-Pacific', 'Americas') or keyword "
         "(substring match on name, country, ticker, category, or product). "
         "Use entity_type='commodities' to retrieve valid commodity symbols before calling "
         "get_mining_metals_prices, get_energy_cost_prices, or get_broad_commodity_cycle. "
-        "Use to identify known distributors, competitor tickers, mine-site names, "
+        "Use entity_type='operators' to identify known mining operators (Komatsu's customers) "
+        "with their tickers, exchanges, and primary commodities; operators flagged is_private "
+        "are not listed, so source their financials via other means. "
+        "Use to identify known distributors, competitor tickers, operator names, "
         "and equipment model families before building external search queries."
     )
     input_schema = MasterdataLookupInput

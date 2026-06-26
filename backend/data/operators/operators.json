@@ -1,0 +1,612 @@
+[
+  {
+    "name": "BHP",
+    "ticker": "BHP",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Melbourne",
+    "primary_commodities": ["iron_ore", "copper", "coal", "nickel", "potash"],
+    "website": "https://www.bhp.com"
+  },
+  {
+    "name": "Rio Tinto",
+    "ticker": "RIO",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United Kingdom / Australia",
+    "hq_city": "London",
+    "primary_commodities": ["iron_ore", "copper", "aluminium", "lithium"],
+    "website": "https://www.riotinto.com"
+  },
+  {
+    "name": "Vale",
+    "ticker": "VALE",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Brazil",
+    "hq_city": "Rio de Janeiro",
+    "primary_commodities": ["iron_ore", "nickel", "copper"],
+    "website": "https://www.vale.com"
+  },
+  {
+    "name": "Glencore",
+    "ticker": "GLEN.L",
+    "exchange": "LSE",
+    "is_private": false,
+    "hq_country": "Switzerland",
+    "hq_city": "Baar",
+    "primary_commodities": ["copper", "cobalt", "zinc", "nickel", "coal"],
+    "website": "https://www.glencore.com"
+  },
+  {
+    "name": "Anglo American",
+    "ticker": "AAL.L",
+    "exchange": "LSE",
+    "is_private": false,
+    "hq_country": "United Kingdom",
+    "hq_city": "London",
+    "primary_commodities": ["copper", "platinum_group_metals", "iron_ore", "diamonds"],
+    "website": "https://www.angloamerican.com"
+  },
+  {
+    "name": "Grupo México",
+    "ticker": "GMEXICOB.MX",
+    "exchange": "BMV",
+    "is_private": false,
+    "hq_country": "Mexico",
+    "hq_city": "Mexico City",
+    "primary_commodities": ["copper", "zinc", "silver", "molybdenum"],
+    "website": "https://www.gmexico.com"
+  },
+  {
+    "name": "Southern Copper",
+    "ticker": "SCCO",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Phoenix, AZ",
+    "primary_commodities": ["copper", "molybdenum", "silver", "zinc"],
+    "website": "https://www.southerncoppercorp.com"
+  },
+  {
+    "name": "Freeport-McMoRan",
+    "ticker": "FCX",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Phoenix, AZ",
+    "primary_commodities": ["copper", "gold", "molybdenum"],
+    "website": "https://www.fcx.com"
+  },
+  {
+    "name": "Teck Resources",
+    "ticker": "TECK",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Vancouver",
+    "primary_commodities": ["copper", "zinc"],
+    "website": "https://www.teck.com"
+  },
+  {
+    "name": "South32",
+    "ticker": "S32.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Perth",
+    "primary_commodities": ["aluminium", "manganese", "zinc", "nickel", "silver"],
+    "website": "https://www.south32.net"
+  },
+  {
+    "name": "Vedanta",
+    "ticker": "VEDL.NS",
+    "exchange": "NSE",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Mumbai",
+    "primary_commodities": ["zinc", "aluminium", "copper", "iron_ore", "silver"],
+    "website": "https://www.vedantalimited.com"
+  },
+  {
+    "name": "Antofagasta",
+    "ticker": "ANTO.L",
+    "exchange": "LSE",
+    "is_private": false,
+    "hq_country": "United Kingdom / Chile",
+    "hq_city": "London",
+    "primary_commodities": ["copper", "molybdenum", "gold"],
+    "website": "https://www.antofagasta.co.uk"
+  },
+  {
+    "name": "First Quantum Minerals",
+    "ticker": "FM.TO",
+    "exchange": "TSX",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Vancouver",
+    "primary_commodities": ["copper", "nickel", "gold"],
+    "website": "https://www.first-quantum.com"
+  },
+  {
+    "name": "Ivanhoe Mines",
+    "ticker": "IVN.TO",
+    "exchange": "TSX",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Vancouver",
+    "primary_commodities": ["copper", "zinc", "platinum_group_metals"],
+    "website": "https://www.ivanhoemines.com"
+  },
+  {
+    "name": "Lundin Mining",
+    "ticker": "LUN.TO",
+    "exchange": "TSX",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Toronto",
+    "primary_commodities": ["copper", "zinc", "nickel", "gold"],
+    "website": "https://www.lundinmining.com"
+  },
+  {
+    "name": "KGHM Polska Miedź",
+    "ticker": "KGH.WA",
+    "exchange": "Warsaw",
+    "is_private": false,
+    "hq_country": "Poland",
+    "hq_city": "Lubin",
+    "primary_commodities": ["copper", "silver"],
+    "website": "https://kghm.com"
+  },
+  {
+    "name": "Codelco",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "Chile",
+    "hq_city": "Santiago",
+    "primary_commodities": ["copper", "molybdenum"],
+    "website": "https://www.codelco.com"
+  },
+  {
+    "name": "PT Amman Mineral Internasional",
+    "ticker": "AMMN.JK",
+    "exchange": "IDX",
+    "is_private": false,
+    "hq_country": "Indonesia",
+    "hq_city": "Jakarta",
+    "primary_commodities": ["copper", "gold"],
+    "website": "https://www.amman.co.id"
+  },
+  {
+    "name": "Newmont",
+    "ticker": "NEM",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Denver, CO",
+    "primary_commodities": ["gold", "copper", "silver"],
+    "website": "https://www.newmont.com"
+  },
+  {
+    "name": "Barrick Mining",
+    "ticker": "B",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Toronto",
+    "primary_commodities": ["gold", "copper"],
+    "website": "https://www.barrick.com"
+  },
+  {
+    "name": "Agnico Eagle Mines",
+    "ticker": "AEM",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Toronto",
+    "primary_commodities": ["gold", "silver"],
+    "website": "https://www.agnicoeagle.com"
+  },
+  {
+    "name": "AngloGold Ashanti",
+    "ticker": "AU",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United Kingdom",
+    "hq_city": "London",
+    "primary_commodities": ["gold"],
+    "website": "https://www.anglogoldashanti.com"
+  },
+  {
+    "name": "Gold Fields",
+    "ticker": "GFI",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "South Africa",
+    "hq_city": "Johannesburg",
+    "primary_commodities": ["gold", "copper"],
+    "website": "https://www.goldfields.com"
+  },
+  {
+    "name": "Kinross Gold",
+    "ticker": "KGC",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Toronto",
+    "primary_commodities": ["gold", "silver"],
+    "website": "https://www.kinross.com"
+  },
+  {
+    "name": "Northern Star Resources",
+    "ticker": "NST.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Perth",
+    "primary_commodities": ["gold"],
+    "website": "https://www.nsrltd.com"
+  },
+  {
+    "name": "Evolution Mining",
+    "ticker": "EVN.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Sydney",
+    "primary_commodities": ["gold", "copper"],
+    "website": "https://www.evolutionmining.com.au"
+  },
+  {
+    "name": "Endeavour Mining",
+    "ticker": "EDV.TO",
+    "exchange": "TSX",
+    "is_private": false,
+    "hq_country": "United Kingdom",
+    "hq_city": "London",
+    "primary_commodities": ["gold"],
+    "website": "https://www.endeavourmining.com"
+  },
+  {
+    "name": "Alamos Gold",
+    "ticker": "AGI",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Toronto",
+    "primary_commodities": ["gold"],
+    "website": "https://www.alamosgold.com"
+  },
+  {
+    "name": "Lundin Gold",
+    "ticker": "LUG.TO",
+    "exchange": "TSX",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Vancouver",
+    "primary_commodities": ["gold"],
+    "website": "https://www.lundingold.com"
+  },
+  {
+    "name": "Harmony Gold",
+    "ticker": "HMY",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "South Africa",
+    "hq_city": "Johannesburg",
+    "primary_commodities": ["gold", "copper"],
+    "website": "https://www.harmony.co.za"
+  },
+  {
+    "name": "Pan American Silver",
+    "ticker": "PAAS",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Vancouver",
+    "primary_commodities": ["silver", "gold"],
+    "website": "https://www.panamericansilver.com"
+  },
+  {
+    "name": "Coeur Mining",
+    "ticker": "CDE",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Chicago, IL",
+    "primary_commodities": ["silver", "gold"],
+    "website": "https://www.coeur.com"
+  },
+  {
+    "name": "Industrias Peñoles",
+    "ticker": "PE&OLES.MX",
+    "exchange": "BMV",
+    "is_private": false,
+    "hq_country": "Mexico",
+    "hq_city": "Mexico City",
+    "primary_commodities": ["silver", "gold", "zinc", "lead"],
+    "website": "https://www.penoles.com.mx"
+  },
+  {
+    "name": "Polyus",
+    "ticker": "PLZL.ME",
+    "exchange": "MOEX",
+    "is_private": false,
+    "hq_country": "Russia",
+    "hq_city": "Moscow",
+    "primary_commodities": ["gold"],
+    "website": "https://polyus.com"
+  },
+  {
+    "name": "Zijin Mining",
+    "ticker": "601899.SS",
+    "exchange": "Shanghai",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Longyan",
+    "primary_commodities": ["gold", "copper", "zinc", "lithium"],
+    "website": "https://www.zijinmining.com"
+  },
+  {
+    "name": "Fortescue",
+    "ticker": "FMG.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Perth",
+    "primary_commodities": ["iron_ore"],
+    "website": "https://www.fortescue.com"
+  },
+  {
+    "name": "NMDC",
+    "ticker": "NMDC.NS",
+    "exchange": "NSE",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Hyderabad",
+    "primary_commodities": ["iron_ore"],
+    "website": "https://www.nmdc.co.in"
+  },
+  {
+    "name": "Cleveland-Cliffs",
+    "ticker": "CLF",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Cleveland, OH",
+    "primary_commodities": ["iron_ore", "steel"],
+    "website": "https://www.clevelandcliffs.com"
+  },
+  {
+    "name": "China Shenhua Energy",
+    "ticker": "601088.SS",
+    "exchange": "Shanghai",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Beijing",
+    "primary_commodities": ["thermal_coal", "coal"],
+    "website": "https://www.csec.com"
+  },
+  {
+    "name": "Coal India",
+    "ticker": "COALINDIA.NS",
+    "exchange": "NSE",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Kolkata",
+    "primary_commodities": ["thermal_coal", "coal"],
+    "website": "https://www.coalindia.in"
+  },
+  {
+    "name": "Yankuang Energy",
+    "ticker": "600188.SS",
+    "exchange": "Shanghai",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Zoucheng",
+    "primary_commodities": ["thermal_coal", "coal"],
+    "website": "https://www.yankuangenergy.com"
+  },
+  {
+    "name": "Whitehaven Coal",
+    "ticker": "WHC.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Sydney",
+    "primary_commodities": ["metallurgical_coal", "thermal_coal", "coal"],
+    "website": "https://www.whitehavencoal.com.au"
+  },
+  {
+    "name": "Bayan Resources",
+    "ticker": "BYAN.JK",
+    "exchange": "IDX",
+    "is_private": false,
+    "hq_country": "Indonesia",
+    "hq_city": "Jakarta",
+    "primary_commodities": ["thermal_coal", "coal"],
+    "website": "https://www.bayan.com.sg"
+  },
+  {
+    "name": "Peabody Energy",
+    "ticker": "BTU",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "St. Louis, MO",
+    "primary_commodities": ["thermal_coal", "metallurgical_coal", "coal"],
+    "website": "https://www.peabodyenergy.com"
+  },
+  {
+    "name": "SQM",
+    "ticker": "SQM",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Chile",
+    "hq_city": "Santiago",
+    "primary_commodities": ["lithium", "potash", "iodine"],
+    "website": "https://www.sqm.com"
+  },
+  {
+    "name": "Albemarle",
+    "ticker": "ALB",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Charlotte, NC",
+    "primary_commodities": ["lithium", "bromine"],
+    "website": "https://www.albemarle.com"
+  },
+  {
+    "name": "Ganfeng Lithium",
+    "ticker": "002460.SZ",
+    "exchange": "Shenzhen",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Xinyu",
+    "primary_commodities": ["lithium"],
+    "website": "https://www.ganfenglithium.com"
+  },
+  {
+    "name": "Tianqi Lithium",
+    "ticker": "002466.SZ",
+    "exchange": "Shenzhen",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Chengdu",
+    "primary_commodities": ["lithium"],
+    "website": "https://www.tianqilithium.com"
+  },
+  {
+    "name": "Nutrien",
+    "ticker": "NTR",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Saskatoon",
+    "primary_commodities": ["potash", "nitrogen", "phosphate"],
+    "website": "https://www.nutrien.com"
+  },
+  {
+    "name": "Mosaic",
+    "ticker": "MOS",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "USA",
+    "hq_city": "Tampa, FL",
+    "primary_commodities": ["potash", "phosphate"],
+    "website": "https://www.mosaicco.com"
+  },
+  {
+    "name": "Cameco",
+    "ticker": "CCJ",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Canada",
+    "hq_city": "Saskatoon",
+    "primary_commodities": ["uranium"],
+    "website": "https://www.cameco.com"
+  },
+  {
+    "name": "Kazatomprom",
+    "ticker": "KAP.IL",
+    "exchange": "LSE",
+    "is_private": false,
+    "hq_country": "Kazakhstan",
+    "hq_city": "Astana",
+    "primary_commodities": ["uranium"],
+    "website": "https://www.kazatomprom.kz"
+  },
+  {
+    "name": "Sibanye-Stillwater",
+    "ticker": "SBSW",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "South Africa",
+    "hq_city": "Johannesburg",
+    "primary_commodities": ["platinum_group_metals", "gold"],
+    "website": "https://www.sibanyestillwater.com"
+  },
+  {
+    "name": "Impala Platinum",
+    "ticker": "IMP.JO",
+    "exchange": "JSE",
+    "is_private": false,
+    "hq_country": "South Africa",
+    "hq_city": "Johannesburg",
+    "primary_commodities": ["platinum_group_metals"],
+    "website": "https://www.implats.co.za"
+  },
+  {
+    "name": "Nornickel",
+    "ticker": "GMKN.ME",
+    "exchange": "MOEX",
+    "is_private": false,
+    "hq_country": "Russia",
+    "hq_city": "Moscow",
+    "primary_commodities": ["nickel", "palladium", "copper", "platinum_group_metals"],
+    "website": "https://www.nornickel.com"
+  },
+  {
+    "name": "Sumitomo Metal Mining",
+    "ticker": "5713.T",
+    "exchange": "TSE",
+    "is_private": false,
+    "hq_country": "Japan",
+    "hq_city": "Tokyo",
+    "primary_commodities": ["nickel", "copper", "gold"],
+    "website": "https://www.smm.co.jp"
+  },
+  {
+    "name": "Lynas Rare Earths",
+    "ticker": "LYC.AX",
+    "exchange": "ASX",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Perth",
+    "primary_commodities": ["rare_earths"],
+    "website": "https://lynasrareearths.com"
+  },
+  {
+    "name": "China Northern Rare Earth",
+    "ticker": "600111.SS",
+    "exchange": "Shanghai",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Baotou",
+    "primary_commodities": ["rare_earths"],
+    "website": "https://www.chinare.com.cn"
+  },
+  {
+    "name": "Hindustan Zinc",
+    "ticker": "HINDZINC.NS",
+    "exchange": "NSE",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Udaipur",
+    "primary_commodities": ["zinc", "lead", "silver"],
+    "website": "https://www.hzlindia.com"
+  },
+  {
+    "name": "Boliden",
+    "ticker": "BOL.ST",
+    "exchange": "Nasdaq Stockholm",
+    "is_private": false,
+    "hq_country": "Sweden",
+    "hq_city": "Stockholm",
+    "primary_commodities": ["zinc", "copper", "gold", "silver"],
+    "website": "https://www.boliden.com"
+  },
+  {
+    "name": "Ma'aden",
+    "ticker": "1211.SR",
+    "exchange": "Tadawul",
+    "is_private": false,
+    "hq_country": "Saudi Arabia",
+    "hq_city": "Riyadh",
+    "primary_commodities": ["phosphate", "gold", "aluminium", "copper"],
+    "website": "https://www.maaden.com.sa"
+  }
+]

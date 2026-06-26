@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from clients.fred_client import FredClient
+from clients.fred_client import FredClient, get_fred_client
 from clients.base_http_client import ClientError
 
 
@@ -28,7 +28,7 @@ class MacroService:
     """Business logic wrapper over FredClient."""
 
     def __init__(self, client: FredClient | None = None) -> None:
-        self._client = client or FredClient()
+        self._client = client or get_fred_client()
 
     async def get_indicator(self, series_id: str, limit: int = 10) -> MacroIndicator:
         try:

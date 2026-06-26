@@ -1,9 +1,17 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from typing import Literal
 
 # Single source of truth for the Mistral model fallback (used when LLM__MODEL is unset).
 MISTRAL_DEFAULT_MODEL = "mistral-medium-latest"
+
+# Anchor on-disk storage to the backend package dir, not the process's cwd — the same
+# pattern services/masterdata_service.py uses for data/. Without this, sqlite_path's
+# default of "./outputs/..." silently resolves to a different file depending on
+# whether uvicorn was launched from backend/ or the repo root.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 
 class LLMSettings(BaseSettings):
@@ -45,8 +53,8 @@ class ReActSettings(BaseSettings):
     max_iterations: int = 8
     collect_max_retries: int = 3  # silent collect→backtrack retries before Gate 2 is shown
     confidence_threshold: float = 0.75
-    hard_time_limit_s: int = 1800   # 30-min safety net; soft timeout handles UX
-    soft_timeout_s: int = 300       # 5-min soft timeout → prompts user to continue
+    hard_time_limit_s: int = 3600   # 60-min safety net; soft timeout handles UX
+    soft_timeout_s: int = 900       # 15-min soft timeout → prompts user to continue, repeats every soft_timeout_s
     per_tool_latency_budget_s: int = 10
     run_token_budget: int = 200_000
     # 1 initial attempt + 4 LLM-adapted repair retries = 5 total attempts per tool call
@@ -67,12 +75,12 @@ class RetrievalSettings(BaseSettings):
 
 
 class StoreSettings(BaseSettings):
-    sqlite_path: str = "./outputs/intel.db"
+    sqlite_path: str = str(_BACKEND_ROOT / "outputs" / "intel.db")
     # Outside the project dir on purpose: SQLite WAL mode (required by the
     # LangGraph checkpointer) needs mmap'd file locking that iCloud/Drive-synced
     # folders don't support, so a path under ./outputs raises "disk I/O error".
     checkpoint_path: str = "~/.komatsu_capstone/checkpoints.db"
-    chroma_path: str = "./outputs/chroma"
+    chroma_path: str = str(_BACKEND_ROOT / "outputs" / "chroma")
     wipe_session_stores_on_chat: bool = True
     episodic_enabled: bool = False
     episodic_min_quality_score: float = 0.75
@@ -100,7 +108,7 @@ class ReportSettings(BaseSettings):
     exec_summary_min_words: int = 400
     exec_summary_max_words: int = 500
     report_format: str = "pdf"
-    output_dir: str = "./outputs"
+    output_dir: str = str(_BACKEND_ROOT / "outputs")
     # Numeric table datasets with more rows than this render as a chart instead.
     report_table_max_rows: int = 10
 
@@ -213,6 +221,7 @@ class Settings(BaseSettings):
     edgar_timeout_s: int = 15
     edgar_max_retries: int = 2
     edgar_rate_limit_per_min: int = 10
+    edgar_exhibit_excerpt_max_chars: int = 15000
 
     # Tavily web search config
     tavily_api_key: str = ""
@@ -225,6 +234,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     fred_base_url: str = "https://api.stlouisfed.org/fred"
     fred_timeout_s: int = 15
+    fred_max_retries: int = 3
     fred_rate_limit_per_min: int = 120
 
     # Master data paths (relative to data/)

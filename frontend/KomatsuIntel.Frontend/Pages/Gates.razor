@@ -155,21 +155,28 @@
         [
             new("commodities",
                 [
-                    new DomainDataset("get_mining_metals_prices", "copper — 4 point(s)", "table",
-                        ["date", "value (USD/lb)"],
-                        [["2026-03", "4.71"], ["2026-04", "4.78"], ["2026-05", "4.80"], ["2026-06", "4.82"]],
-                        4, null, null),
+                    new EntityGroup("Copper",
+                    [
+                        new DomainDataset("get_mining_metals_prices", "copper — 4 point(s)", "table",
+                            ["date", "value (USD/lb)"],
+                            [["2026-03", "4.71"], ["2026-04", "4.78"], ["2026-05", "4.80"], ["2026-06", "4.82"]],
+                            4, null, null, "numeric_series", "COPPER", 4),
+                    ]),
                 ],
                 []),
             new("competition",
                 [
-                    new DomainDataset("news_search", "3 article(s)", "list", null, null, 3, null,
-                        [
-                            new DatasetItem("Caterpillar Q3 revenue tops estimates", "https://example.com/cat", "Revenue $16.8B (+4% YoY)."),
-                            new DatasetItem("Volvo CE launches EC950F", "https://example.com/volvo", "New 90-tonne excavator."),
-                        ]),
+                    new EntityGroup("Caterpillar Inc.",
+                    [
+                        new DomainDataset("news_search", "3 article(s)", "list", null, null, 3, null,
+                            [
+                                new DatasetItem("Caterpillar Q3 revenue tops estimates", "https://example.com/cat", "Revenue $16.8B (+4% YoY)."),
+                                new DatasetItem("Volvo CE launches EC950F", "https://example.com/volvo", "New 90-tonne excavator."),
+                            ],
+                            "articles", "", 3),
+                    ]),
                 ],
-                ["competition/search_sec_filings: HTTP 429 rate limited"]),
+                [new FailedTool("search_sec_filings", "SEC EDGAR", "HTTP 429 rate limited")]),
         ]);
         UpdateBreadcrumbs();
     }
