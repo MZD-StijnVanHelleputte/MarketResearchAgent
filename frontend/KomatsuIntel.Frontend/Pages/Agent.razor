@@ -336,9 +336,26 @@
                 @if (_loading)
                 {
                     <MudStack Spacing="1" Class="mb-2">
-                        <MudProgressLinear Indeterminate="true" Color="Color.Primary"
-                                           Rounded="true" Size="Size.Small" />
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">@_statusMessage</MudText>
+                        @if (_currentStage == 1 && _toolCallsTotal is > 0)
+                        {
+                            <MudProgressLinear Value="@(100.0 * (_toolCallsCompleted ?? 0) / _toolCallsTotal!.Value)"
+                                               Color="Color.Primary" Rounded="true" Size="Size.Small" />
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @(_toolCallsCompleted ?? 0) / @_toolCallsTotal sources collected
+                            </MudText>
+                            @if (!string.IsNullOrWhiteSpace(_currentToolLabel))
+                            {
+                                <MudText Typo="Typo.caption" Style="color:#6B7280;font-style:italic;">
+                                    @_currentToolLabel
+                                </MudText>
+                            }
+                        }
+                        else
+                        {
+                            <MudProgressLinear Indeterminate="true" Color="Color.Primary"
+                                               Rounded="true" Size="Size.Small" />
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@_statusMessage</MudText>
+                        }
                     </MudStack>
                 }
 
@@ -451,6 +468,9 @@
     private int     _seenActivityCount = 0;
     private int     _seenSourcesCount  = 0;
     private string? _currentThought;
+    private int?    _toolCallsTotal;
+    private int?    _toolCallsCompleted;
+    private string? _currentToolLabel;
     private bool    _summaryShown;
     private string? _pdfWarning;
     private bool    _pdfDownloading;
@@ -663,6 +683,9 @@
         _consolidatedPlan       = null;
         _currentStage           = 0;
         _seenActivityCount  = 0;
+        _toolCallsTotal      = null;
+        _toolCallsCompleted  = null;
+        _currentToolLabel    = null;
         _messages.Clear();
         _sources.Clear();
         _expandedThoughts.Clear();
@@ -766,6 +789,9 @@
             if (run is null) continue;
 
             _statusMessage = run.StatusMessage ?? $"Stage: {run.Stage}…";
+            _toolCallsTotal     = run.ToolCallsTotal;
+            _toolCallsCompleted = run.ToolCallsCompleted;
+            _currentToolLabel   = run.CurrentToolLabel;
             _currentStage = run.Stage switch
             {
                 "understand" => 0,

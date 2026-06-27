@@ -22,8 +22,11 @@ from reportlab.platypus import (
 )
 
 from config import settings
+from core.tot.schemas import DATASET_OWNERSHIP_PRIORITY
 from reports.assembler import ReportDraft
 from reports.chart_renderer import render_chart, should_chart
+from reports.citations import build_citation_index, render_sources_section
+from reports.markup import escape_text, render_text
 
 logger = logging.getLogger(__name__)
 
@@ -134,23 +137,6 @@ def _header_footer(canvas, doc, run_date: str) -> None:
 _CHART_WIDTH = 15 * cm
 _CHART_ASPECT = 3.2 / 6.2  # matches chart_renderer's figsize=(6.2, 3.2)
 
-# Ranks domains by which one most plausibly "owns" a dataset that more than one
-# domain happened to collect (e.g. a commodity price series belongs to
-# commodities even if mining_projects also pulled it for a site's output; a
-# company's own financials belong to competition/customers over mining_projects).
-# This is purely a cross-domain dedup tie-breaker — it does NOT affect chapter
-# display order, which stays as core/graph.py::_DOMAINS produced it.
-_DATASET_OWNERSHIP_PRIORITY = [
-    "commodities",
-    "competition",
-    "customers",
-    "distributors",
-    "mining_projects",
-    "macro_geopolitics",
-    "general_search",
-]
-
-
 def _dataset_key(dataset: dict):
     """Stable identity for cross-domain/intra-domain dedup of a dataset."""
     return dataset.get("series_id") or (dataset.get("tool", ""), dataset.get("title", ""))
@@ -159,14 +145,14 @@ def _dataset_key(dataset: dict):
 def _build_dataset_owners(chapters: list[dict]) -> dict:
     """Decide which single domain renders each dataset that appears in >1 chapter.
 
-    Walks chapters in `_DATASET_OWNERSHIP_PRIORITY` order (not display order) so
+    Walks chapters in `DATASET_OWNERSHIP_PRIORITY` order (not display order) so
     the most topically relevant domain claims a shared series; chapters not in
     that list fall to the end, in their original relative order.
     """
-    rank = {d: i for i, d in enumerate(_DATASET_OWNERSHIP_PRIORITY)}
+    rank = {d: i for i, d in enumerate(DATASET_OWNERSHIP_PRIORITY)}
     ordered = sorted(
         chapters,
-        key=lambda ch: rank.get(ch.get("domain", ""), len(_DATASET_OWNERSHIP_PRIORITY)),
+        key=lambda ch: rank.get(ch.get("domain", ""), len(DATASET_OWNERSHIP_PRIORITY)),
     )
     owner: dict = {}
     for chapter in ordered:
@@ -203,7 +189,7 @@ def _dataset_flowables(dataset: dict, styles: dict) -> list:
         return []
 
     max_rows = settings.report.report_table_max_rows
-    caption = Paragraph(dataset.get("title", ""), styles["table_caption"])
+    caption = Paragraph(escape_text(dataset.get("title", "")), styles["table_caption"])
 
     if should_chart(dataset, max_rows):
         png_bytes = render_chart(dataset)
@@ -235,6 +221,7 @@ class PdfGenerator:
 
         run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         styles = _build_styles()
+        citation_index = build_citation_index(draft, draft.citation_registry)
 
         buf = BytesIO()
         doc = SimpleDocTemplate(
@@ -258,7 +245,7 @@ class PdfGenerator:
         story.append(Spacer(1, 0.5 * cm))
         story.append(Paragraph("Market Intelligence Report", styles["cover_title"]))
         query_snippet = draft.query[:120] + ("…" if len(draft.query) > 120 else "")
-        story.append(Paragraph(f"Query: {query_snippet}", styles["cover_sub"]))
+        story.append(Paragraph(f"Query: {escape_text(query_snippet)}", styles["cover_sub"]))
         story.append(Paragraph(f"Run ID: {draft.run_id}", styles["cover_sub"]))
         story.append(Paragraph(f"Generated: {run_date}", styles["cover_sub"]))
         story.append(HRFlowable(width="100%", thickness=1, color=_KOMATSU_YELLOW, spaceAfter=10))
@@ -268,7 +255,7 @@ class PdfGenerator:
             for para in draft.exec_summary.split("\n\n"):
                 para = para.strip()
                 if para:
-                    story.append(Paragraph(para, styles["body"]))
+                    story.append(Paragraph(render_text(para, citation_index), styles["body"]))
         else:
             story.append(Paragraph(
                 "<i>(Executive summary not available for this run.)</i>",
@@ -290,11 +277,11 @@ class PdfGenerator:
                 attributed: set = set()
                 for sc in subchapters:
                     label = sc.get("subdomain_label") or sc.get("subdomain_key") or "Entity"
-                    story.append(Paragraph(label, styles["subsection_heading"]))
+                    story.append(Paragraph(escape_text(label), styles["subsection_heading"]))
                     for para in (sc.get("text") or "").split("\n\n"):
                         para = para.strip()
                         if para:
-                            story.append(Paragraph(para, styles["body"]))
+                            story.append(Paragraph(render_text(para, citation_index), styles["body"]))
                     for dataset in sc.get("datasets") or []:
                         key = _dataset_key(dataset)
                         attributed.add(key)
@@ -305,7 +292,7 @@ class PdfGenerator:
                 for para in text.split("\n\n"):
                     para = para.strip()
                     if para:
-                        story.append(Paragraph(para, styles["body"]))
+                        story.append(Paragraph(render_text(para, citation_index), styles["body"]))
                 # Domain tables not already shown under an entity, and owned by this domain.
                 for dataset in chapter.get("datasets") or []:
                     key = _dataset_key(dataset)
@@ -315,10 +302,16 @@ class PdfGenerator:
                 for para in text.split("\n\n"):
                     para = para.strip()
                     if para:
-                        story.append(Paragraph(para, styles["body"]))
+                        story.append(Paragraph(render_text(para, citation_index), styles["body"]))
                 for dataset in chapter.get("datasets") or []:
                     if owners.get(_dataset_key(dataset)) == domain:
                         story.extend(_dataset_flowables(dataset, styles))
+
+        # --- Sources (numbered footnote references) ---
+        sources_flowables = render_sources_section(citation_index, draft.citation_registry, styles)
+        if sources_flowables:
+            story.append(PageBreak())
+            story.extend(sources_flowables)
 
         # --- Appendix (merge log + warnings) ---
         appendix_items = (
@@ -330,7 +323,7 @@ class PdfGenerator:
             story.append(Paragraph("Appendix — Merge Log & Warnings", styles["appendix_heading"]))
             story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey, spaceAfter=6))
             for item in appendix_items:
-                story.append(Paragraph(f"• {item}", styles["appendix_item"]))
+                story.append(Paragraph(f"• {escape_text(item)}", styles["appendix_item"]))
 
         doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 

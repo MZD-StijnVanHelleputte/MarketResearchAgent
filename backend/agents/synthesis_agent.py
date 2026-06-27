@@ -17,6 +17,7 @@ from crewai import Agent, Crew, LLM, Task
 import models.crewai_patches  # noqa: F401 — must run before any Agent/Crew/Task is built
 from config import settings
 from core.schemas import MergedChapter
+from models.json_repair import extract_json_field
 from models.llm_retry import call_with_backoff, crew_semaphore
 from models.usage import crew_usage
 from prompts.domain_agent_prompt import SYNTHESIS_TASK_TEMPLATE
@@ -62,7 +63,7 @@ class SynthesisAgent:
         subdomain_label: str,
         figures: dict[str, str],
         datasets: list[dict],
-        citations: list[str],
+        citations: list[dict],
         retrieved_chunks: list,
         query: str = "",
     ) -> dict:
@@ -72,7 +73,7 @@ class SynthesisAgent:
         summary on CrewAI failure so the rollup always has leaves to work with.
         """
         evidence_json = json.dumps(
-            {"figures": figures, "datasets": datasets, "citations": citations},
+            {"figures": figures, "datasets": datasets},
             indent=2, default=str,
         )
         prompt = SUBDOMAIN_SYNTHESIS_TEMPLATE.format(
@@ -80,6 +81,7 @@ class SynthesisAgent:
             subdomain_label=subdomain_label,
             research_question=query,
             evidence_json=evidence_json,
+            available_sources=self._format_available_sources(citations),
             retrieved_chunks_text=self._format_chunks(retrieved_chunks),
             min_words=settings.synthesis.subdomain_min_words,
             max_words=settings.synthesis.subdomain_max_words,
@@ -171,11 +173,12 @@ class SynthesisAgent:
         sqlite_figures: list[dict],
         query: str = "",
     ) -> dict:
-        merged_json = merged_chapter.model_dump_json(indent=2)
+        merged_json = merged_chapter.model_dump_json(indent=2, exclude={"citations"})
         prompt = SYNTHESIS_TASK_TEMPLATE.format(
             domain=domain,
             research_question=query,
             merged_chapter_json=merged_json,
+            available_sources=self._format_available_sources(merged_chapter.citations),
             retrieved_chunks_text=self._format_chunks(retrieved_chunks),
         )
         text, usage = self._kickoff(
@@ -224,18 +227,29 @@ class SynthesisAgent:
         usage = crew_usage(crew_result)
         result = str(crew_result).strip()
 
-        # Strip markdown fences
-        if result.startswith("```"):
-            result = "\n".join(
-                line for line in result.splitlines() if not line.startswith("```")
-            ).strip()
-
-        try:
-            data = json.loads(result)
-            text = data.get("text", result)
-        except (json.JSONDecodeError, KeyError, AttributeError):
-            text = result
+        text = extract_json_field(result, "text")
+        if text is None:
+            raise ValueError(f"could not parse 'text' field from LLM response: {result[:200]!r}")
         return text, usage
+
+    @staticmethod
+    def _format_available_sources(citations: list[dict]) -> str:
+        """Render a numbered "Available sources" block for the synthesis prompt.
+
+        Only citations that already carry a global id (assigned post-merge by
+        assign_global_citation_ids) are listed — the LLM must cite by this number
+        only, never invent its own label.
+        """
+        lines: list[str] = []
+        for c in citations:
+            cid = c.get("id")
+            if cid is None:
+                continue
+            title = c.get("title") or "Unknown source"
+            publisher = c.get("publisher")
+            label = f"{title} — {publisher}" if publisher else title
+            lines.append(f"[{cid}] {label}")
+        return "\n".join(lines) if lines else "(no sources available)"
 
     @staticmethod
     def _format_chunks(retrieved_chunks: list) -> str:
@@ -244,7 +258,14 @@ class SynthesisAgent:
         for chunk in retrieved_chunks[:5]:
             text = getattr(chunk, "text", None) or (chunk.get("text", "") if isinstance(chunk, dict) else "")
             source = getattr(chunk, "source", None) or (chunk.get("source", "") if isinstance(chunk, dict) else "")
-            if text:
+            if not text:
+                continue
+            if source == "__internal_synthesis__":
+                # The system's own prior synthesis being re-embedded as retrieval
+                # context, not an external source — no bracketed tag, so the LLM
+                # can't mistake it for something citable.
+                chunk_lines.append(text[:400])
+            else:
                 chunk_lines.append(f"[{source}] {text[:400]}")
         return "\n".join(chunk_lines) if chunk_lines else "No additional context available."
 

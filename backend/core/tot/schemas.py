@@ -1,5 +1,20 @@
 from pydantic import BaseModel, Field, field_validator
 
+# Tie-break order when the same dataset/tool call could be attributed to more than
+# one domain (e.g. a commodity price series pulled by both "commodities" and
+# "macro_geopolitics"). Earlier entries win. Shared by plan_merger.py (dedup before
+# collection) and reports/pdf_generator.py (dedup at render time) so both stages
+# agree on which domain owns a given series.
+DATASET_OWNERSHIP_PRIORITY = [
+    "commodities",
+    "competition",
+    "customers",
+    "distributors",
+    "mining_projects",
+    "macro_geopolitics",
+    "general_search",
+]
+
 
 class CandidatePlan(BaseModel):
     plan_id: str

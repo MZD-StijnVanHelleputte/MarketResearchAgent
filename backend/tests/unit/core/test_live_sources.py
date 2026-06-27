@@ -69,6 +69,34 @@ async def test_dedupes_identical_provisional_rows(tmp_db):
 
 
 @pytest.mark.asyncio
+async def test_retry_success_replaces_earlier_failed_row(tmp_db):
+    await _seed_run()
+    set_run_context("run1", stage="collect", domain="competition")
+
+    # First attempt fails, then a repair retry for the same tool/args succeeds.
+    await record_live_source("get_equity_price", {"ticker": "CAT"}, failed=True, reason="HTTP 500")
+    await record_live_source("get_equity_price", {"ticker": "CAT"}, result={"prices": [1, 2]})
+
+    run = await SqliteStore().get_run("run1")
+    assert len(run["sources"]) == 1
+    assert run["sources"][0]["failed"] is False
+    assert run["sources"][0]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_later_failure_replaces_earlier_success_row(tmp_db):
+    await _seed_run()
+    set_run_context("run1", stage="collect", domain="competition")
+
+    await record_live_source("get_equity_price", {"ticker": "CAT"}, result={"prices": [1]})
+    await record_live_source("get_equity_price", {"ticker": "CAT"}, failed=True, reason="HTTP 500")
+
+    run = await SqliteStore().get_run("run1")
+    assert len(run["sources"]) == 1
+    assert run["sources"][0]["failed"] is True
+
+
+@pytest.mark.asyncio
 async def test_skips_non_collect_stage(tmp_db):
     await _seed_run()
     # Research/understand tool calls feed planning context, not the Sources panel.

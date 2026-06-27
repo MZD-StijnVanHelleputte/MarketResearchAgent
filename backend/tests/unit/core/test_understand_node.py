@@ -161,3 +161,69 @@ async def test_understand_node_grounding_failure_falls_back():
 
     assert result["stage"] == "collect"
     assert len(result["plans"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_understand_node_retries_grounding_when_gaps_present():
+    """A consolidated plan with gap_report triggers one remediation round (default max=1)."""
+    all_plans = _all_seven_plans()
+    gapped = _consolidated()
+    gapped.gap_report = "Tool 'x' unavailable; no substitute found."
+    clean = _consolidated()
+
+    with patch("core.graph.ResearchAgent") as MockResearch, \
+         patch("core.graph.PlanProposer") as MockProposer, \
+         patch("core.graph.GroundingAgent") as MockGrounder, \
+         patch("core.graph.score_and_prune", return_value=all_plans), \
+         patch("core.graph.PlanMerger") as MockMerger, \
+         patch("core.graph.Retriever"), \
+         patch("core.graph.write_plan_direct"), \
+         patch("core.graph.clear_plans"), \
+         patch("core.graph._timeout_interrupt_if_needed") as mock_timeout:
+        MockResearch.return_value.run = AsyncMock(return_value=ResearchContext())
+        MockResearch.return_value.last_usage = {}
+        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
+        MockProposer.return_value.last_usage = {}
+        MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+        MockGrounder.return_value.last_usage = {}
+        MockMerger.return_value.merge = AsyncMock(side_effect=[gapped, clean])
+        MockMerger.return_value.last_usage = {}
+
+        result = await understand_node(_base_state())
+
+    assert result["stage"] == "collect"
+    assert MockMerger.return_value.merge.await_count == 2
+    assert MockGrounder.return_value.run.call_count == 2
+    # Called once at node entry, once more for the single remediation round.
+    assert mock_timeout.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_understand_node_stops_remediation_at_max_rounds():
+    """Gaps that never clear stop after gap_remediation_max_rounds, not forever."""
+    all_plans = _all_seven_plans()
+    gapped = _consolidated()
+    gapped.gap_report = "Persistent structural gap."
+
+    with patch("core.graph.ResearchAgent") as MockResearch, \
+         patch("core.graph.PlanProposer") as MockProposer, \
+         patch("core.graph.GroundingAgent") as MockGrounder, \
+         patch("core.graph.score_and_prune", return_value=all_plans), \
+         patch("core.graph.PlanMerger") as MockMerger, \
+         patch("core.graph.Retriever"), \
+         patch("core.graph.write_plan_direct"), \
+         patch("core.graph.clear_plans"):
+        MockResearch.return_value.run = AsyncMock(return_value=ResearchContext())
+        MockResearch.return_value.last_usage = {}
+        MockProposer.return_value.propose = AsyncMock(return_value=all_plans)
+        MockProposer.return_value.last_usage = {}
+        MockGrounder.return_value.run = MagicMock(return_value=all_plans)
+        MockGrounder.return_value.last_usage = {}
+        MockMerger.return_value.merge = AsyncMock(return_value=gapped)
+        MockMerger.return_value.last_usage = {}
+
+        result = await understand_node(_base_state())
+
+    assert result["stage"] == "collect"
+    # Default gap_remediation_max_rounds=1: initial pass + 1 retry = 2 merge calls.
+    assert MockMerger.return_value.merge.await_count == 2

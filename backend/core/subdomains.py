@@ -23,6 +23,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from itertools import zip_longest
 
 from config import settings
 from core.schemas import MergedChapter
@@ -43,6 +44,7 @@ class Subdomain:
     label: str                     # human label, e.g. "Caterpillar Inc."
     aliases: set[str] = field(default_factory=set)  # strings that identify the entity
     query_hint: str = ""           # retrieval query seed
+    segment: str = ""              # customer segment, e.g. "Mining", "Construction", "Others"
 
     def __post_init__(self) -> None:
         self.aliases = {a for a in self.aliases if a and len(a) >= 2}
@@ -57,7 +59,7 @@ class EntityEvidence:
     retrieved_chunks: list = field(default_factory=list)   # clean Chunk objects
     datasets: list[dict] = field(default_factory=list)
     figures: dict[str, str] = field(default_factory=dict)
-    citations: list[str] = field(default_factory=list)
+    citations: list[dict] = field(default_factory=list)    # structured {id, title, url, publisher}
     injection_flags: list[str] = field(default_factory=list)
 
 
@@ -176,7 +178,8 @@ def assemble_entity_evidence(
         if _mentions(f"{k} {v}".lower(), sub.aliases)
     }
     evidence.citations = [
-        c for c in merged_chapter.citations if _mentions(c.lower(), sub.aliases)
+        c for c in merged_chapter.citations
+        if _mentions(f"{c.get('title', '')} {c.get('publisher', '')}".lower(), sub.aliases)
     ]
     return evidence
 
@@ -223,10 +226,13 @@ def group_datasets_by_entity(
         if matched is None:
             general.append(ds)
             continue
-        if matched.label not in buckets:
-            buckets[matched.label] = {"label": matched.label, "datasets": []}
-            order.append(matched.label)
-        buckets[matched.label]["datasets"].append(ds)
+        # Segment-tagged candidates (e.g. customers: Mining/Construction/Others) get a
+        # prefixed bucket label so Gate 2 and the PDF group companies by segment.
+        bucket_label = f"{matched.segment}: {matched.label}" if matched.segment else matched.label
+        if bucket_label not in buckets:
+            buckets[bucket_label] = {"label": bucket_label, "datasets": []}
+            order.append(bucket_label)
+        buckets[bucket_label]["datasets"].append(ds)
 
     result = [buckets[label] for label in order]
     if general:
@@ -320,29 +326,53 @@ def _distributors_candidates(manifest: dict, masterdata) -> list[Subdomain]:
     return cands
 
 
-def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+def _customer_segment_candidates(
+    entries: list[dict], segment: str, seen: set[str]
+) -> list[Subdomain]:
+    """Build Subdomain candidates for one customer segment (mining/construction/others)
+    from a master-data entry list, tagging each with its segment."""
     cands: list[Subdomain] = []
-    # Mining operators are Komatsu's primary customer base.
-    seen: set[str] = set()
-    for op in masterdata.get_operators():
-        name = op.get("name", "")
-        ticker = str(op.get("ticker", "") or "")
+    for entry in entries:
+        name = entry.get("name", "")
+        ticker = str(entry.get("ticker", "") or "")
         if name and name not in seen:
             seen.add(name)
             cands.append(Subdomain(
                 key=ticker.upper() or name,
                 label=name,
                 aliases={name, ticker},
-                query_hint=f"{name} capex equipment spend",
+                query_hint=f"{name} ({segment}) capex equipment spend",
+                segment=segment,
             ))
-    # Plus any researched mining operators from the manifest.
+    return cands
+
+
+def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    # Komatsu's customer base spans three segments: mining operators (existing
+    # primary customer base), construction & infrastructure contractors, and
+    # niche industrial buyers (recyclers, steelmakers, pulp/paper producers).
+    seen: set[str] = set()
+    mining = _customer_segment_candidates(masterdata.get_operators(), "Mining", seen)
+    construction = _customer_segment_candidates(masterdata.get_construction(), "Construction", seen)
+    others = _customer_segment_candidates(masterdata.get_others(), "Others", seen)
+
+    # Plus any researched mining operators from the manifest (kept as "Mining" —
+    # construction/others entity discovery from manifest is not yet supported).
     for c in manifest.get("operators", []) or []:
         label = str(c).strip()
-        if label:
-            cands.append(Subdomain(
+        if label and label not in seen:
+            seen.add(label)
+            mining.append(Subdomain(
                 key=label, label=label, aliases={label},
-                query_hint=f"{label} capital expenditure",
+                query_hint=f"{label} (Mining) capital expenditure",
+                segment="Mining",
             ))
+
+    # Interleave segments round-robin so the generic cap in enumerate_subdomains
+    # (max_subdomains_per_domain) doesn't let one segment crowd out the others.
+    cands: list[Subdomain] = []
+    for group in zip_longest(mining, construction, others):
+        cands.extend(c for c in group if c is not None)
     return cands
 
 
@@ -380,9 +410,9 @@ def _theme_candidates(
     hint = ""
     if demand_side:
         hint = (
-            "\nNote: these demand-side consumer companies were researched for their "
+            "\nNote: these third-party demand-side companies were researched for their "
             "commodity demand — if they appear in the evidence above, surface a distinct "
-            "demand-side theme covering them: " + ", ".join(demand_side) + "\n"
+            "third-party theme covering them: " + ", ".join(demand_side) + "\n"
         )
     prompt = THEME_EXTRACTION_TEMPLATE.format(
         domain=domain, evidence_text=evidence_text, hint=hint
@@ -454,7 +484,7 @@ def _evidence_text(merged_chapter: MergedChapter) -> str:
     parts = [merged_chapter.text]
     for k, v in merged_chapter.figures.items():
         parts.append(f"{k} {v}")
-    parts.extend(merged_chapter.citations)
+    parts.extend(f"{c.get('title', '')} {c.get('publisher', '')}" for c in merged_chapter.citations)
     try:
         parts.append(json.dumps(merged_chapter.datasets, default=str))
     except Exception:

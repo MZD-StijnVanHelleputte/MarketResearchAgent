@@ -53,6 +53,71 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Must match _NODE_MESSAGES["collect"] in api/routers/chat.py — logged once per
+# collect_node entry (including ReAct backtrack re-entries), marking where the
+# *current* collection pass begins.
+_COLLECT_ITERATION_START_LABEL = "Collecting intelligence from data sources…"
+
+
+def _compute_collect_progress(events: list[dict], current_stage: str | None) -> dict:
+    """Derive live collection-progress fields from the run's step_events, so the
+    frontend can show a determinate completion bar instead of a spinner.
+
+    tool_calls_total comes from each domain agent's one-time "domain_filter" event
+    (detail["matched"] = calls assigned to that domain); tool_calls_completed counts
+    "tool_call"/"tool_error" events. A retried call logs an extra "tool_error" before
+    its eventual "tool_call", so completed can briefly exceed total — an accepted,
+    cosmetic overcount, not worth suppressing.
+
+    ReAct backtracking can re-invoke collect_node within the same run, re-logging
+    domain_filter/tool_call/tool_error from scratch each time — without scoping to
+    the latest collect_node entry, sums would accumulate across iterations and
+    produce a meaningless (and sometimes completed > total) ratio.
+    """
+    boundary = 0
+    for e in events:
+        if (
+            e.get("event_type") == "progress"
+            and e.get("stage") == "collect"
+            and e.get("label") == _COLLECT_ITERATION_START_LABEL
+        ):
+            boundary = e.get("id", boundary)
+    events = [e for e in events if e.get("id", 0) >= boundary]
+
+    total = 0
+    completed = 0
+    current_label: str | None = None
+    current_domain: str | None = None
+    for e in events:
+        event_type = e.get("event_type")
+        if event_type == "domain_filter":
+            try:
+                detail = json.loads(e["detail"]) if e.get("detail") else {}
+            except (json.JSONDecodeError, TypeError):
+                detail = {}
+            total += detail.get("matched") or 0
+        elif event_type in ("tool_call", "tool_error") and e.get("stage") == "collect":
+            completed += 1
+        if (
+            event_type == "progress"
+            and e.get("stage") == "collect"
+            and (e.get("label") or "").startswith("Fetching ")
+        ):
+            current_label = e.get("label")
+            current_domain = e.get("domain") or None
+
+    if current_stage != "collect" or (total > 0 and completed >= total):
+        current_label = None
+        current_domain = None
+
+    return {
+        "tool_calls_total": total,
+        "tool_calls_completed": completed,
+        "current_tool_label": current_label,
+        "current_domain": current_domain,
+    }
+
+
 def _duration_seconds(created_at: str | None, updated_at: str | None) -> int:
     """Whole-second elapsed time between two ISO timestamps (0 on parse failure)."""
     try:
@@ -206,8 +271,13 @@ class SqliteStore:
         # The live activity feed shown in chat is built from step_events
         # (granular, business-friendly progress messages), not the legacy
         # activity_log column (which only ever held 5 static stage strings).
-        events = await self.get_step_events(run_id, limit=200)
+        # limit=1000: a single collect stage with ~50 tool calls across 7 domains can
+        # log 200+ events (domain_filter + per-call progress + tool_call/error +
+        # retries) on its own, before counting understand/synthesize stage events —
+        # truncating here would silently undercount tool_calls_total/completed below.
+        events = await self.get_step_events(run_id, limit=1000)
         result["activity_log"] = [e["label"] for e in events if e["event_type"] == "progress"]
+        result.update(_compute_collect_progress(events, result.get("stage")))
         return result
 
     async def list_runs(self, limit: int = 100) -> list[dict]:

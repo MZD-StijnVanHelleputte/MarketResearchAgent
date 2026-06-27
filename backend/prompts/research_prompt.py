@@ -17,23 +17,31 @@ and the exchange it trades on (e.g. "Caterpillar → CAT on NYSE").
 never lump the two together:
      - "competitors": equipment/machinery OEMs that sell products competing with Komatsu's \
 (e.g. Caterpillar, Hitachi Construction Machinery, Sandvik, XCMG).
-     - "operators": mining companies that BUY equipment — these are Komatsu's customers, \
-not its rivals (e.g. BHP, Rio Tinto, Vale).
-     - "demand_side_companies": commodity CONSUMERS whose demand drives the prices of \
-metals/minerals relevant to the query, but which are neither equipment rivals nor mining \
-operators (e.g. EV/battery/auto OEMs like BYD, Volkswagen, Tesla, CATL for copper/nickel/lithium; \
-large industrial buyers). Capture these when the query touches commodity demand so their \
-demand signal is not lost.
-   - Use masterdata_lookup first — its `entity_type` field ("competitors" vs "operators") \
-tells you which list a known company belongs to. For companies not in master data, use \
-your own judgement: does it manufacture and sell mining/construction equipment (competitor), \
-does it operate mines and buy equipment (operator), or is it a downstream buyer that consumes \
-commodities (demand_side_companies)? Fall back to web_search only if master data has no result.
+     - "operators": companies that BUY Komatsu equipment — these are Komatsu's customers, \
+not its rivals. This spans three segments: mining operators (e.g. BHP, Rio Tinto, Vale), \
+construction & infrastructure contractors from civil/marine works to residential developers \
+(e.g. DEME, Besix, Vinci, Bechtel), and niche industrial buyers such as metals recyclers, \
+steelmakers, or pulp/paper producers (e.g. Umicore, ArcelorMittal, Stora Enso). All three \
+segments belong in "operators" — do not drop construction or niche-industrial companies just \
+because they aren't miners.
+     - "demand_side_companies": commodity CONSUMERS (third parties) whose demand drives the \
+prices of metals/minerals relevant to the query, but which are neither equipment rivals nor \
+Komatsu customers (e.g. EV/battery/auto OEMs like BYD, Volkswagen, Tesla, CATL for \
+copper/nickel/lithium; large industrial buyers). Capture these when the query touches \
+commodity demand so their third-party demand signal is not lost.
+   - Use masterdata_lookup first — its `entity_type` field ("competitors", "operators", \
+"construction", "others") tells you which list a known company belongs to (construction and \
+others both map to the "operators" output list above — they're just stored in separate \
+master-data tables). For companies not in master data, use your own judgement: does it \
+manufacture and sell mining/construction equipment (competitor), does it buy Komatsu \
+equipment as a mining, construction, or niche-industrial customer (operator), or is it a \
+downstream buyer that consumes commodities as a third party (demand_side_companies)? Fall \
+back to web_search only if master data has no result.
    - For commodity names → find their primary futures symbol \
 (e.g. "gold → GC=F on COMEX", "copper → HG=F").
 
 2. MARKET LANDSCAPE
-   - For the central theme of the query, find the top 3–5 relevant players \
+   - For the central theme of the query, find the top 8–12 relevant players \
 that are NOT already named in the query, split the same way: rival equipment makers go in \
 "competitors", mining companies go in "operators". \
 A web or news search like "largest gold miners by production 2024" is appropriate here.

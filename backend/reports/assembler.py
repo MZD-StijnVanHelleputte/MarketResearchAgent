@@ -22,6 +22,9 @@ class ReportDraft(BaseModel):
     chapters: list[dict]    # [{domain, text}] ordered by domain priority
     merge_log: list[str]
     warnings: list[str]
+    # {id: {"title", "url", "publisher"}} — every unique source across all domains,
+    # keyed by the global id assigned in core/merger.py::assign_global_citation_ids.
+    citation_registry: dict = {}
 
 
 class Assembler:
@@ -43,4 +46,5 @@ class Assembler:
             chapters=chapters,
             merge_log=list(final_state.get("merge_log") or []),
             warnings=list(final_state.get("warnings") or []),
+            citation_registry=dict(final_state.get("citation_registry") or {}),
         )

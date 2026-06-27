@@ -52,7 +52,7 @@ from agents.grounding_agent import GroundingAgent
 from state_bus.server import clear_plans, write_plan_direct, get_all_plans_direct
 from memory.context_window import ContextWindow
 from memory.sqlite_store import SqliteStore
-from core.merger import merge_chapter_sets, chapter_set_overlap
+from core.merger import assign_global_citation_ids, merge_chapter_sets, chapter_set_overlap
 from core.schemas import ChapterDraft, MergedChapter
 from core.subdomains import (
     enumerate_subdomains,
@@ -122,6 +122,9 @@ class AgentState(TypedDict):
     clarification_done: bool
     # Phase 10 report fields
     exec_summary: str
+    # {id: citation_dict} — every unique source across all domains, numbered once
+    # by assign_global_citation_ids() so the same source shares one id everywhere.
+    citation_registry: dict
     # Soft-timeout tracking: unix timestamp set once at graph start
     run_start_time: float
     # Cumulative seconds spent paused at gates/timeout-checks, excluded from elapsed-time math
@@ -273,10 +276,14 @@ async def _run_domain_agent(
     agent_instance = agent_cls()
     draft = await agent_instance.run(plan, run_id)
 
-    # Write chapter text to the per-run Chroma collection (unstructured store)
+    # Write chapter text to the per-run Chroma collection (unstructured store) so
+    # later synthesis passes can retrieve it as additional context. This is the
+    # system's own prior synthesis being re-embedded, not an external source, so
+    # it's tagged with an internal marker that synthesis_agent._format_chunks
+    # recognizes and never lets a citation-hungry LLM mistake for a real source.
     if draft.text.strip():
         try:
-            docs = chunker.chunk_text(draft.text, source=f"{domain}_agent", domain=domain)
+            docs = chunker.chunk_text(draft.text, source="__internal_synthesis__", domain=domain)
             retriever.add(collection, docs)
         except Exception as exc:
             logger.warning("_run_domain_agent: chroma write failed for %s/%s: %s",
@@ -399,64 +406,92 @@ async def understand_node(state: AgentState) -> dict:
         )
         return {"stage": "error", "error": f"PlanProposer failed: {exc}"}
 
-    # 4. Ground to depth-2 via CrewAI critic
-    await log_event("progress", "Reviewing and refining the research plans…")
+    # 4-7. Ground to depth-2, score/prune to survivors, merge into one
+    # consolidated plan. If the consolidated plan still reports gaps
+    # (GroundingAgent couldn't find a substitute for an unavailable tool),
+    # retry grounding+merge up to gap_remediation_max_rounds extra times
+    # before handing the plan to Gate 1. This is bounded by round count, not
+    # time — most gaps are structural and won't close with repeated
+    # attempts — and reuses the same soft-timeout check-in as every other
+    # node, so a long remediation pass still gets the usual 15-min prompt.
     grounder_usage: dict = {}
-    try:
-        grounder = GroundingAgent()
-        grounded = grounder.run(candidates)
-        grounder_usage = grounder.last_usage
-    except Exception as exc:
-        logger.warning(
-            "understand_node: GroundingAgent failed (%s) — skipping grounding.", exc
-        )
-        grounded = candidates  # use depth-1 plans as fallback
-
-    # 5. Score and prune to survivors
-    all_plans = score_and_prune(grounded)
-    survivors = [p for p in all_plans if p.is_survivor]
-
-    # 6. Write all plans to the MCP state bus; clear stale plans first
-    clear_plans()
-    for plan in all_plans:
-        write_plan_direct(plan)
-
-    # 7. Merge survivors into one consolidated plan
-    await log_event("progress", "Selecting the strongest research plan…")
     merger_usage: dict = {}
-    try:
-        merger = PlanMerger()
-        consolidated = await merger.merge(survivors, research_context, run_id=state["run_id"])
-        merger_usage = merger.last_usage
-        logger.info(
-            "understand_node: merged %d survivors into consolidated plan '%s'",
-            len(survivors),
-            consolidated.plan_id,
-        )
-    except Exception as exc:
-        logger.warning("understand_node: PlanMerger failed (%s) — falling back to top survivor only", exc)
-        # Fallback: use the top survivor as-is, converted to a ConsolidatedPlan-like dict
-        top = survivors[0] if survivors else None
-        if top is None:
-            await log_event(
-                "error", "No survivor plans and merger failed",
-                detail={"error": str(exc), "exc_type": type(exc).__name__},
-                level="error",
+    max_rounds = settings.understand.gap_remediation_max_rounds
+    remediation_round = 0
+
+    while True:
+        await log_event("progress", "Reviewing and refining the research plans…")
+        try:
+            grounder = GroundingAgent()
+            grounded = grounder.run(candidates)
+            grounder_usage = merge_usage(grounder_usage, grounder.last_usage)
+        except Exception as exc:
+            logger.warning(
+                "understand_node: GroundingAgent failed (%s) — skipping grounding.", exc
             )
-            return {"stage": "error", "error": "No survivor plans and merger failed"}
-        from core.tot.schemas import ConsolidatedPlan
-        consolidated = ConsolidatedPlan(
-            plan_id=f"consolidated-{state['run_id']}",
-            source_plan_ids=[top.plan_id],
-            domains_active=[d for d, a in top.domain_activations.items() if a],
-            entity_manifest={},
-            planned_tool_calls=[],
-            research_findings="",
-            rationale=top.rationale,
-            gap_report=" ".join(top.gap_report) if isinstance(top.gap_report, list) else top.gap_report,
-            feasibility_score=top.feasibility_score,
-            quality_score=top.quality_score,
+            grounded = candidates  # use depth-1 plans as fallback
+
+        # 5. Score and prune to survivors
+        all_plans = score_and_prune(grounded)
+        survivors = [p for p in all_plans if p.is_survivor]
+
+        # 6. Write all plans to the MCP state bus; clear stale plans first
+        clear_plans()
+        for plan in all_plans:
+            write_plan_direct(plan)
+
+        # 7. Merge survivors into one consolidated plan
+        await log_event("progress", "Selecting the strongest research plan…")
+        try:
+            merger = PlanMerger()
+            consolidated = await merger.merge(survivors, research_context, run_id=state["run_id"])
+            merger_usage = merge_usage(merger_usage, merger.last_usage)
+            logger.info(
+                "understand_node: merged %d survivors into consolidated plan '%s'",
+                len(survivors),
+                consolidated.plan_id,
+            )
+        except Exception as exc:
+            logger.warning("understand_node: PlanMerger failed (%s) — falling back to top survivor only", exc)
+            # Fallback: use the top survivor as-is, converted to a ConsolidatedPlan-like dict
+            top = survivors[0] if survivors else None
+            if top is None:
+                await log_event(
+                    "error", "No survivor plans and merger failed",
+                    detail={"error": str(exc), "exc_type": type(exc).__name__},
+                    level="error",
+                )
+                return {"stage": "error", "error": "No survivor plans and merger failed"}
+            from core.tot.schemas import ConsolidatedPlan
+            consolidated = ConsolidatedPlan(
+                plan_id=f"consolidated-{state['run_id']}",
+                source_plan_ids=[top.plan_id],
+                domains_active=[d for d, a in top.domain_activations.items() if a],
+                entity_manifest={},
+                planned_tool_calls=[],
+                research_findings="",
+                rationale=top.rationale,
+                gap_report=" ".join(top.gap_report) if isinstance(top.gap_report, list) else top.gap_report,
+                feasibility_score=top.feasibility_score,
+                quality_score=top.quality_score,
+            )
+            break  # no merger available to retry against
+
+        gaps = consolidated.gap_report
+        has_gaps = bool(gaps.strip()) if isinstance(gaps, str) else bool(gaps)
+        if not has_gaps or remediation_round >= max_rounds:
+            break
+
+        remediation_round += 1
+        logger.info(
+            "understand_node: consolidated plan has unresolved gaps, retrying "
+            "grounding (remediation round %d/%d)",
+            remediation_round, max_rounds,
         )
+        try:
+            _timeout_interrupt_if_needed(state)
+        except _TimeoutStopSignal:
+            return {"stage": "partial"}
 
     n_candidates = len(all_plans)
     n_survivors = len(survivors)
@@ -711,6 +746,21 @@ async def partial_brief_node(state: AgentState) -> dict:
     }
 
 
+def _dedupe_citations(citations: list[dict]) -> list[dict]:
+    """Dedupe citation dicts by url (else title+publisher), preserving order."""
+    seen: set = set()
+    out: list[dict] = []
+    for c in citations:
+        url = (c.get("url") or "").strip().lower()
+        key = ("url", url) if url else (
+            "title", (c.get("title") or "").strip().lower(), (c.get("publisher") or "").strip().lower()
+        )
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
+
+
 async def _remediate_subchapters(
     mc: MergedChapter,
     subdomains: list,
@@ -758,7 +808,7 @@ async def _remediate_subchapters(
                 )
                 figures = {**evidence.figures, **figures}
                 datasets = datasets or evidence.datasets
-                citations = list(dict.fromkeys(citations + evidence.citations))
+                citations = _dedupe_citations(citations + evidence.citations)
                 chunks = evidence.retrieved_chunks
 
                 if not had_evidence:
@@ -777,9 +827,12 @@ async def _remediate_subchapters(
                                 "tool": "web_search", "title": f"{len(items)} result(s)",
                                 "kind": "list", "items": items,
                             }]
-                            citations = list(dict.fromkeys(
-                                citations + [i["url"] for i in items if i.get("url")]
-                            ))
+                            new_citations = [
+                                {"id": None, "title": i.get("title") or i["url"],
+                                 "url": i.get("url"), "publisher": None}
+                                for i in items if i.get("url")
+                            ]
+                            citations = _dedupe_citations(citations + new_citations)
                     except Exception as exc:
                         all_warnings.append(
                             f"completeness_gate: {label} remediation search failed: {exc}"
@@ -849,6 +902,11 @@ async def synthesize_node(state: AgentState) -> dict:
         ]
         merge_log = []
 
+    # Assign each unique source one stable id across all domains, in
+    # first-occurrence order — downstream entity filtering, synthesis prompts,
+    # and the PDF's numbered Sources section all key off this shared registry.
+    citation_registry = assign_global_citation_ids(merged_chapters)
+
     # ------------------------------------------------------------------
     # Step 2: Diversity recovery path
     # ------------------------------------------------------------------
@@ -898,11 +956,18 @@ async def synthesize_node(state: AgentState) -> dict:
                 supplementary_text = "\n\n".join(
                     f"**{d.domain.title()}**\n{d.text}" for d in recovery_drafts
                 )
-                merged_chapters.append(MergedChapter(
+                supplementary_chapter = MergedChapter(
                     domain="supplementary",
                     text=supplementary_text,
+                    citations=[c for d in recovery_drafts for c in d.citations],
                     source_plan_ids=[recovery_plan.get("plan_id", "recovery")],
-                ))
+                )
+                merged_chapters.append(supplementary_chapter)
+                # Extend (not replace) the registry so ids already used by other
+                # chapters' prompts/markers stay stable.
+                citation_registry = assign_global_citation_ids(
+                    [supplementary_chapter], existing=citation_registry
+                )
                 logger.info("synthesize_node: appended supplementary section from recovery plan")
 
     # ------------------------------------------------------------------
@@ -1148,6 +1213,7 @@ async def synthesize_node(state: AgentState) -> dict:
         "warnings": all_warnings,
         "injection_flags": all_injection_flags,
         "exec_summary": exec_summary,
+        "citation_registry": citation_registry,
         **accumulate(state, *usage_dicts),
     }
 

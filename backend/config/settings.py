@@ -19,7 +19,7 @@ class LLMSettings(BaseSettings):
     model: str = MISTRAL_DEFAULT_MODEL
     propose_temperature: float = 0.9
     work_temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     # PlanProposer asks for `branching_factor` (7) deeply-nested plans in one
     # completion — the global max_tokens above is too tight for that and was
     # truncating the JSON mid-string. Override just for that call.
@@ -50,7 +50,7 @@ class ToTSettings(BaseSettings):
 
 
 class ReActSettings(BaseSettings):
-    max_iterations: int = 8
+    max_iterations: int = 15
     collect_max_retries: int = 3  # silent collect→backtrack retries before Gate 2 is shown
     confidence_threshold: float = 0.75
     hard_time_limit_s: int = 3600   # 60-min safety net; soft timeout handles UX
@@ -164,8 +164,14 @@ class SafetySettings(BaseSettings):
 class UnderstandSettings(BaseSettings):
     """Controls the pre-planning research loop and plan-merger step."""
     research_enabled: bool = True
-    research_max_tool_calls: int = 6
-    research_timeout_s: int = 30
+    research_max_tool_calls: int = 10
+    research_timeout_s: int = 45
+    # If the consolidated plan still has gap_report entries after merging,
+    # retry grounding up to this many extra rounds before presenting the
+    # plan at Gate 1. Bounded by round count (not time) since most gaps are
+    # structural (no substitute tool exists) and won't close with more
+    # attempts; the existing soft timeout still governs overall duration.
+    gap_remediation_max_rounds: int = 1
 
 
 class Settings(BaseSettings):
@@ -189,6 +195,11 @@ class Settings(BaseSettings):
     # API tier flags — set to "premium" in .env to unlock premium-gated tools
     fmp_tier: Literal["free", "premium"] = "free"
     alpha_vantage_tier: Literal["free", "premium"] = "free"
+    # NewsAPI.org free dev plan only returns articles from the last month;
+    # paid plans unlock the full historical archive (~5 years).
+    newsapi_tier: Literal["free", "premium"] = "free"
+    newsapi_free_max_lookback_days: int = 30
+    newsapi_premium_max_lookback_days: int = 1825
 
     # Secrets (env-only)
     mistral_api_key: str = ""
@@ -212,7 +223,7 @@ class Settings(BaseSettings):
     # FMP (Financial Modeling Prep) client config — /stable/ API (the /api/v3/* routes
     # are legacy and return HTTP 403 for keys created after 2025-08-31).
     fmp_base_url: str = "https://financialmodelingprep.com"
-    fmp_timeout_s: int = 10
+    fmp_timeout_s: int = 15
     fmp_max_retries: int = 3
     fmp_rate_limit_per_min: int = 10
 
@@ -226,7 +237,7 @@ class Settings(BaseSettings):
     # Tavily web search config
     tavily_api_key: str = ""
     tavily_base_url: str = "https://api.tavily.com"
-    tavily_timeout_s: int = 10
+    tavily_timeout_s: int = 15
     tavily_research_timeout_s: int = 180  # /research takes 30–120 s
     tavily_rate_limit_per_min: int = 60
 

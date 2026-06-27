@@ -25,6 +25,8 @@ class MasterDataService:
         self._operators = self._load("operators/operators.json")
         self._competitors = self._load("competitors/competitors.json")
         self._distributors = self._load("distributors/distributors.json")
+        self._construction = self._load("construction/construction.json")
+        self._others = self._load("others/others.json")
         self._commodities = self._load_csv(settings.commodity_tickers_path)
 
     def _load(self, relative_path: str) -> list[dict]:
@@ -59,6 +61,12 @@ class MasterDataService:
     def get_distributors(self) -> list[dict]:
         return self._distributors
 
+    def get_construction(self) -> list[dict]:
+        return self._construction
+
+    def get_others(self) -> list[dict]:
+        return self._others
+
     def get_commodities(self) -> list[dict]:
         return self._commodities
 
@@ -66,6 +74,8 @@ class MasterDataService:
         "distributors": "_distributors",
         "competitors": "_competitors",
         "operators": "_operators",
+        "construction": "_construction",
+        "others": "_others",
         "equipment": "_equipment",
         "commodities": "_commodities",
     }

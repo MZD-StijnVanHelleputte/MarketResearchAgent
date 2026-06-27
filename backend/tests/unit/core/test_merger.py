@@ -3,14 +3,19 @@ import pytest
 
 from core.merger import (
     _figures_contradict,
+    assign_global_citation_ids,
     chapter_set_overlap,
     merge_chapter_sets,
 )
 from core.schemas import ChapterDraft, MergedChapter
 
 
+def _citation(url: str) -> dict:
+    return {"id": None, "title": url, "url": url, "publisher": None}
+
+
 def _make_draft(domain: str, plan_id: str, figures: dict | None = None,
-                citations: list[str] | None = None, text: str = "some text",
+                citations: list[dict] | None = None, text: str = "some text",
                 datasets: list[dict] | None = None) -> dict:
     return ChapterDraft(
         domain=domain,
@@ -80,19 +85,45 @@ def test_merge_no_contradiction_within_tolerance():
 def test_merge_combines_citations_deduplicated():
     chapter_sets = {
         "plan_A::competition": _make_draft("competition", "plan_A",
-                                           citations=["https://a.com", "https://b.com"]),
+                                           citations=[_citation("https://a.com"), _citation("https://b.com")]),
         "plan_B::competition": _make_draft("competition", "plan_B",
-                                           citations=["https://b.com", "https://c.com"]),
+                                           citations=[_citation("https://b.com"), _citation("https://c.com")]),
     }
     plans = [_make_plan("plan_A", 0.9), _make_plan("plan_B", 0.7)]
     merged, _ = merge_chapter_sets(chapter_sets, plans)
-    cits = merged[0].citations
-    assert "https://a.com" in cits
-    assert "https://b.com" in cits
-    assert "https://c.com" in cits
-    assert len(cits) == cits.count("https://a.com") + cits.count("https://b.com") + cits.count("https://c.com")
-    # no duplicates
-    assert len(cits) == len(set(cits))
+    urls = [c["url"] for c in merged[0].citations]
+    assert "https://a.com" in urls
+    assert "https://b.com" in urls
+    assert "https://c.com" in urls
+    # no duplicates — the same url cited by both plans collapses to one entry
+    assert len(urls) == len(set(urls))
+
+
+def test_assign_global_citation_ids_shares_id_across_chapters():
+    chapters = [
+        MergedChapter(domain="competition", text="t", citations=[_citation("https://a.com")]),
+        MergedChapter(domain="commodities", text="t", citations=[_citation("https://a.com"), _citation("https://b.com")]),
+    ]
+    registry = assign_global_citation_ids(chapters)
+    cid_a = chapters[0].citations[0]["id"]
+    cid_a_again = chapters[1].citations[0]["id"]
+    cid_b = chapters[1].citations[1]["id"]
+    assert cid_a == cid_a_again
+    assert cid_a != cid_b
+    assert registry[cid_a]["url"] == "https://a.com"
+    assert registry[cid_b]["url"] == "https://b.com"
+
+
+def test_assign_global_citation_ids_extends_existing_registry():
+    first = [MergedChapter(domain="competition", text="t", citations=[_citation("https://a.com")])]
+    registry = assign_global_citation_ids(first)
+    cid_a = first[0].citations[0]["id"]
+
+    second = [MergedChapter(domain="supplementary", text="t", citations=[_citation("https://a.com"), _citation("https://z.com")])]
+    registry = assign_global_citation_ids(second, existing=registry)
+    assert second[0].citations[0]["id"] == cid_a  # same source keeps its id
+    assert second[0].citations[1]["id"] != cid_a
+    assert len(registry) == 2
 
 
 def test_merge_uses_auth_plan_text():

@@ -32,6 +32,14 @@ def _masterdata():
         {"name": "Freeport-McMoRan", "ticker": "FCX", "is_private": False, "primary_commodities": ["copper", "gold"]},
         {"name": "Codelco", "ticker": None, "is_private": True, "primary_commodities": ["copper"]},
     ]
+    md.get_construction.return_value = [
+        {"name": "DEME Group", "ticker": None, "is_private": True, "primary_segments": ["dredging"]},
+        {"name": "Vinci SA", "ticker": "DG.PA", "is_private": False, "primary_segments": ["infrastructure"]},
+    ]
+    md.get_others.return_value = [
+        {"name": "Umicore", "ticker": "UMI.BR", "is_private": False, "primary_segments": ["recycling"]},
+        {"name": "ArcelorMittal", "ticker": "MT", "is_private": False, "primary_segments": ["steel"]},
+    ]
     return md
 
 
@@ -59,6 +67,42 @@ def test_group_datasets_by_entity_buckets_under_named_competitor():
     assert by_label["General"]["datasets"][0]["tool"] == "web_search"
 
 
+def test_customers_candidates_interleave_segments_and_tag_them():
+    from core.subdomains import _customers_candidates
+
+    cands = _customers_candidates({}, _masterdata())
+
+    labels_by_segment = {}
+    for c in cands:
+        labels_by_segment.setdefault(c.segment, []).append(c.label)
+
+    assert labels_by_segment["Mining"] == ["BHP", "Freeport-McMoRan", "Codelco"]
+    assert labels_by_segment["Construction"] == ["DEME Group", "Vinci SA"]
+    assert labels_by_segment["Others"] == ["Umicore", "ArcelorMittal"]
+    # Round-robin interleave: Mining, Construction, Others, Mining, Construction, Others, Mining.
+    assert [c.segment for c in cands] == [
+        "Mining", "Construction", "Others",
+        "Mining", "Construction", "Others",
+        "Mining",
+    ]
+
+
+def test_group_datasets_by_entity_prefixes_segment_for_customers():
+    """Gate-2 buckets for the customers domain are segment-prefixed (e.g. 'Mining: BHP')."""
+    datasets = [
+        {"tool": "get_equity_price", "title": "BHP price", "series_id": "BHP"},
+        {"tool": "get_equity_price", "title": "DEME Group capex", "series_id": "DEME"},
+        {"tool": "get_equity_price", "title": "Umicore recycling capex", "series_id": "UMI"},
+    ]
+    plan = {"entity_manifest": {}}
+    groups = group_datasets_by_entity("customers", datasets, plan, _masterdata())
+
+    labels = {g["label"] for g in groups}
+    assert "Mining: BHP" in labels
+    assert "Construction: DEME Group" in labels
+    assert "Others: Umicore" in labels
+
+
 def test_group_datasets_by_entity_thematic_domain_single_bucket():
     """Thematic / non-decomposable domains skip the entity tier (no LLM at a gate)."""
     datasets = [{"tool": "get_macro_indicator", "data_type": "numeric_series", "label": "GDP"}]
@@ -71,7 +115,7 @@ def test_competition_enumerates_only_entities_present_in_evidence():
         domain="competition",
         text="Caterpillar reported strong Q3 results. Sandvik expanded its mining tools range.",
         figures={"CAT_revenue_bn": "67.1", "SAND.ST_margin": "19%"},
-        citations=["https://example.com/cat"],
+        citations=[{"id": None, "title": "CAT filing", "url": "https://example.com/cat", "publisher": None}],
     )
     plan = {"entity_manifest": {"tickers": ["CAT", "SAND.ST"]}}
     subs, usage = enumerate_subdomains("competition", mc, plan, _masterdata())
@@ -139,7 +183,10 @@ def test_assemble_entity_evidence_filters_datasets_figures_citations():
             {"tool": "get_equity_price", "title": "CAT price history"},
             {"tool": "get_equity_price", "title": "SAND.ST price history"},
         ],
-        citations=["https://example.com/cat-filing", "https://example.com/sandvik-news"],
+        citations=[
+            {"id": None, "title": "CAT SEC filing", "url": "https://example.com/cat-filing", "publisher": "SEC EDGAR"},
+            {"id": None, "title": "Sandvik expands tools", "url": "https://example.com/sandvik-news", "publisher": "Reuters"},
+        ],
     )
     plan = {"entity_manifest": {"tickers": ["CAT", "SAND.ST"]}}
     subs, _usage = enumerate_subdomains("competition", mc, plan, _masterdata())
@@ -155,7 +202,7 @@ def test_assemble_entity_evidence_filters_datasets_figures_citations():
 
     assert evidence.figures == {"CAT_revenue_bn": "67.1"}
     assert evidence.datasets == [{"tool": "get_equity_price", "title": "CAT price history"}]
-    assert evidence.citations == ["https://example.com/cat-filing"]
+    assert [c["url"] for c in evidence.citations] == ["https://example.com/cat-filing"]
 
 
 def test_assemble_entity_evidence_filters_injection_tainted_chunks():

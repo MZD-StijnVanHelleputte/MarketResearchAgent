@@ -16,6 +16,15 @@ from core.schemas import ChapterDraft, MergedChapter
 logger = logging.getLogger(__name__)
 
 
+def _citation_key(citation: dict) -> tuple:
+    """Dedup key for a citation dict: by URL when present, else title+publisher."""
+    url = (citation.get("url") or "").strip().lower()
+    if url:
+        return ("url", url)
+    return ("title", (citation.get("title") or "").strip().lower(),
+            (citation.get("publisher") or "").strip().lower())
+
+
 def merge_chapter_sets(
     chapter_sets: dict[str, dict],
     plans: list[dict],
@@ -55,7 +64,8 @@ def merge_chapter_sets(
 
         # Start with authoritative figures
         figures: dict[str, str] = dict(auth_draft.figures)
-        citations: list[str] = list(auth_draft.citations)
+        citations: list[dict] = list(auth_draft.citations)
+        citation_keys: set = {_citation_key(c) for c in citations}
         contradiction_flags: list[str] = list(auth_draft.contradiction_flags)
         source_plan_ids: list[str] = [auth_plan_id]
         # Union datasets across all survivor drafts for this domain (deduped by
@@ -92,9 +102,11 @@ def merge_chapter_sets(
                     # Metric only in lower-priority plan — include it
                     figures[metric] = alt_value
 
-            # Merge citations (deduplicated)
+            # Merge citations (deduplicated by URL, else title+publisher)
             for cit in alt_draft.citations:
-                if cit not in citations:
+                key = _citation_key(cit)
+                if key not in citation_keys:
+                    citation_keys.add(key)
                     citations.append(cit)
 
             # Merge contradiction_flags from sub-agents
@@ -117,6 +129,39 @@ def merge_chapter_sets(
                     len(merge_log), len(merged_chapters))
 
     return merged_chapters, merge_log
+
+
+def assign_global_citation_ids(
+    chapters: list[MergedChapter],
+    existing: dict[int, dict] | None = None,
+) -> dict[int, dict]:
+    """Assign one stable global id per unique citation across all domains.
+
+    The same source cited from two different domain chapters must resolve to the
+    same id everywhere downstream (entity filtering, synthesis prompts, the final
+    PDF's numbered Sources section). Mutates each citation dict in place to carry
+    its assigned "id"; returns the {id: citation} registry. Pass a previously
+    returned registry as `existing` to extend it (e.g. for a chapter appended by
+    the diversity-recovery path) without renumbering already-assigned ids.
+    """
+    registry: dict[int, dict] = dict(existing or {})
+    key_to_id: dict[tuple, int] = {
+        _citation_key(c): cid for cid, c in registry.items()
+    }
+    next_id = max(registry.keys(), default=0) + 1
+
+    for chapter in chapters:
+        for citation in chapter.citations:
+            key = _citation_key(citation)
+            cid = key_to_id.get(key)
+            if cid is None:
+                cid = next_id
+                next_id += 1
+                key_to_id[key] = cid
+                registry[cid] = citation
+            citation["id"] = cid
+
+    return registry
 
 
 def chapter_set_overlap(chapters: list[MergedChapter]) -> float:

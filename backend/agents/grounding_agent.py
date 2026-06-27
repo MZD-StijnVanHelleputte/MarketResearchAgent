@@ -53,7 +53,12 @@ explaining what data is missing.
 3. Set feasibility_score (0.0-1.0): fraction of originally planned data \
 sources that can actually be collected (after substitutions).
 4. Set quality_score (0.0-1.0): estimate of how well the grounded plan will \
-answer a Komatsu competitive-intelligence query given the available data.
+answer a Komatsu competitive-intelligence query given the available data. A plan \
+that covers a named company with only financial/ticker calls (e.g. \
+get_company_financials, get_equity_price) and no web_extract or news_search call \
+for that company should score lower than an otherwise-similar plan that pairs \
+financial calls with web_extract (company website/IR) and dated news_search \
+coverage.
 5. Set depth=2.
 
 Respond with ONLY a valid JSON object (no markdown fences, no other text) \

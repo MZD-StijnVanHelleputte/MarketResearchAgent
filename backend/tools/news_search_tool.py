@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from pydantic import BaseModel, Field
 from tools.base import BaseTool
 from services.news_service import NewsService
+from config.settings import settings
 
 
 class NewsSearchInput(BaseModel):
@@ -23,9 +24,23 @@ class NewsSearchTool(BaseTool):
     def __init__(self, service: NewsService | None = None) -> None:
         self._service = service or NewsService()
 
+    def _max_lookback_days(self) -> int:
+        if settings.newsapi_tier == "premium":
+            return settings.newsapi_premium_max_lookback_days
+        return settings.newsapi_free_max_lookback_days
+
     async def run(self, **kwargs) -> dict:
         inp = NewsSearchInput(**kwargs)
-        effective_from = inp.from_date or (date.today() - timedelta(days=30)).isoformat()
+        max_lookback_days = self._max_lookback_days()
+        earliest_allowed = date.today() - timedelta(days=max_lookback_days)
+        default_from = date.today() - timedelta(days=min(30, max_lookback_days))
+
+        if inp.from_date:
+            requested_from = date.fromisoformat(inp.from_date)
+            effective_from = max(requested_from, earliest_allowed).isoformat()
+        else:
+            effective_from = default_from.isoformat()
+
         articles = await self._service.search(
             query=inp.query,
             language=inp.language,

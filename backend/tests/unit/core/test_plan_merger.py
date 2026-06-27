@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
-from core.plan_merger import PlanMerger, _expand_per_ticker_calls, _fallback_merge
+from core.plan_merger import PlanMerger, _dedupe_cross_domain, _expand_per_ticker_calls, _fallback_merge
 from core.tot.schemas import CandidatePlan, PlannedToolCall, ResearchContext
 
 
@@ -77,6 +77,47 @@ def test_expand_per_ticker_calls_respects_safety_cap():
     assert len(expanded) == 50
 
 
+def test_dedupe_cross_domain_keeps_higher_priority_domain():
+    calls = [
+        PlannedToolCall(tool="get_mining_metals_prices", params={"symbol": "COPPER"}, domain="macro_geopolitics"),
+        PlannedToolCall(tool="get_mining_metals_prices", params={"symbol": "COPPER"}, domain="commodities"),
+    ]
+
+    deduped = _dedupe_cross_domain(calls)
+
+    assert len(deduped) == 1
+    assert deduped[0].domain == "commodities"
+
+
+def test_dedupe_cross_domain_keeps_distinct_params():
+    calls = [
+        PlannedToolCall(tool="get_mining_metals_prices", params={"symbol": "COPPER"}, domain="commodities"),
+        PlannedToolCall(tool="get_mining_metals_prices", params={"symbol": "GOLD"}, domain="commodities"),
+    ]
+
+    deduped = _dedupe_cross_domain(calls)
+
+    assert len(deduped) == 2
+
+
+def test_fallback_merge_dedupes_across_domains():
+    survivors = [
+        _candidate(plan_id="plan_001", tool_calls=[
+            {"tool": "get_mining_metals_prices", "domain": "commodities", "arguments": {"symbol": "COPPER"}},
+        ]),
+        _candidate(plan_id="plan_002", tool_calls=[
+            {"tool": "get_mining_metals_prices", "domain": "macro_geopolitics", "arguments": {"symbol": "COPPER"}},
+        ]),
+    ]
+    research_context = ResearchContext()
+
+    plan = _fallback_merge(survivors, research_context, run_id="run123")
+
+    copper_calls = [tc for tc in plan.planned_tool_calls if tc.tool == "get_mining_metals_prices"]
+    assert len(copper_calls) == 1
+    assert copper_calls[0].domain == "commodities"
+
+
 def test_fallback_merge_expands_per_ticker():
     survivors = [
         _candidate(tool_calls=[
@@ -121,3 +162,34 @@ async def test_merge_llm_path_expands_per_ticker():
         tc.params["ticker"] for tc in plan.planned_tool_calls if tc.tool == "get_equity_price"
     }
     assert tickers_called == {"CAT", "DE"}
+
+
+@pytest.mark.asyncio
+async def test_merge_llm_path_dedupes_cross_domain_duplicates():
+    survivors = [
+        _candidate(tool_calls=[
+            {"tool": "get_mining_metals_prices", "domain": "commodities", "arguments": {"symbol": "COPPER"}},
+        ]),
+    ]
+    research_context = ResearchContext()
+
+    merger = PlanMerger()
+    llm_response_json = (
+        '{"plan_id": "x", "domains_active": ["commodities", "macro_geopolitics"], '
+        '"entity_manifest": {}, "planned_tool_calls": ['
+        '{"tool": "get_mining_metals_prices", "domain": "commodities", "params": {"symbol": "COPPER"}}, '
+        '{"tool": "get_mining_metals_prices", "domain": "macro_geopolitics", "params": {"symbol": "COPPER"}}'
+        '], "research_findings": "", "rationale": "r", "gap_report": "", '
+        '"feasibility_score": 0.8, "quality_score": 0.7}'
+    )
+
+    class _FakeResponse:
+        content = llm_response_json
+        usage = {}
+
+    with patch.object(merger._llm, "acomplete", AsyncMock(return_value=_FakeResponse())):
+        plan = await merger.merge(survivors, research_context, run_id="run123")
+
+    copper_calls = [tc for tc in plan.planned_tool_calls if tc.tool == "get_mining_metals_prices"]
+    assert len(copper_calls) == 1
+    assert copper_calls[0].domain == "commodities"

@@ -1,0 +1,172 @@
+[
+  {
+    "name": "Umicore",
+    "ticker": "UMI.BR",
+    "exchange": "Euronext Brussels",
+    "is_private": false,
+    "hq_country": "Belgium",
+    "hq_city": "Brussels",
+    "primary_segments": ["recycling", "battery_materials", "precious_metals"],
+    "website": "https://www.umicore.com"
+  },
+  {
+    "name": "ArcelorMittal",
+    "ticker": "MT",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Luxembourg",
+    "hq_city": "Luxembourg City",
+    "primary_segments": ["steel", "mining_metals"],
+    "website": "https://www.arcelormittal.com"
+  },
+  {
+    "name": "Stora Enso",
+    "ticker": "STERV.HE",
+    "exchange": "Nasdaq Helsinki",
+    "is_private": false,
+    "hq_country": "Finland",
+    "hq_city": "Helsinki",
+    "primary_segments": ["forestry", "pulp_paper", "wood_products"],
+    "website": "https://www.storaenso.com"
+  },
+  {
+    "name": "Nucor Corporation",
+    "ticker": "NUE",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Charlotte, North Carolina",
+    "primary_segments": ["steel", "recycling"],
+    "website": "https://www.nucor.com"
+  },
+  {
+    "name": "POSCO Holdings",
+    "ticker": "005490.KS",
+    "exchange": "Korea Exchange",
+    "is_private": false,
+    "hq_country": "South Korea",
+    "hq_city": "Pohang",
+    "primary_segments": ["steel", "battery_materials"],
+    "website": "https://www.posco-holdings.com"
+  },
+  {
+    "name": "Veolia Environnement",
+    "ticker": "VIE.PA",
+    "exchange": "Euronext Paris",
+    "is_private": false,
+    "hq_country": "France",
+    "hq_city": "Aubervilliers",
+    "primary_segments": ["recycling", "waste_management", "water"],
+    "website": "https://www.veolia.com"
+  },
+  {
+    "name": "Sims Limited",
+    "ticker": "SGM.AX",
+    "exchange": "Australian Securities Exchange",
+    "is_private": false,
+    "hq_country": "Australia",
+    "hq_city": "Sydney",
+    "primary_segments": ["metal_recycling"],
+    "website": "https://www.simsltd.com"
+  },
+  {
+    "name": "UPM-Kymmene",
+    "ticker": "UPM.HE",
+    "exchange": "Nasdaq Helsinki",
+    "is_private": false,
+    "hq_country": "Finland",
+    "hq_city": "Helsinki",
+    "primary_segments": ["forestry", "pulp_paper"],
+    "website": "https://www.upm.com"
+  },
+  {
+    "name": "Smurfit WestRock",
+    "ticker": "SW",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "Ireland",
+    "hq_city": "Dublin",
+    "primary_segments": ["packaging", "pulp_paper"],
+    "website": "https://www.smurfitwestrock.com"
+  },
+  {
+    "name": "Norsk Hydro",
+    "ticker": "NHY.OL",
+    "exchange": "Oslo Stock Exchange",
+    "is_private": false,
+    "hq_country": "Norway",
+    "hq_city": "Oslo",
+    "primary_segments": ["aluminium", "recycling"],
+    "website": "https://www.hydro.com"
+  },
+  {
+    "name": "thyssenkrupp AG",
+    "ticker": "TKA.DE",
+    "exchange": "Xetra",
+    "is_private": false,
+    "hq_country": "Germany",
+    "hq_city": "Essen",
+    "primary_segments": ["steel", "industrial_components"],
+    "website": "https://www.thyssenkrupp.com"
+  },
+  {
+    "name": "Boliden AB",
+    "ticker": "BOL.ST",
+    "exchange": "Nasdaq Stockholm",
+    "is_private": false,
+    "hq_country": "Sweden",
+    "hq_city": "Stockholm",
+    "primary_segments": ["smelting", "recycling", "mining_metals"],
+    "website": "https://www.boliden.com"
+  },
+  {
+    "name": "Aurubis AG",
+    "ticker": "NDA.DE",
+    "exchange": "Xetra",
+    "is_private": false,
+    "hq_country": "Germany",
+    "hq_city": "Hamburg",
+    "primary_segments": ["copper_smelting", "recycling"],
+    "website": "https://www.aurubis.com"
+  },
+  {
+    "name": "Befesa S.A.",
+    "ticker": "BFSA.DE",
+    "exchange": "Xetra",
+    "is_private": false,
+    "hq_country": "Luxembourg",
+    "hq_city": "Luxembourg City",
+    "primary_segments": ["industrial_waste_recycling"],
+    "website": "https://www.befesa.com"
+  },
+  {
+    "name": "Weyerhaeuser Co",
+    "ticker": "WY",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Seattle, Washington",
+    "primary_segments": ["forestry", "wood_products"],
+    "website": "https://www.weyerhaeuser.com"
+  },
+  {
+    "name": "International Paper",
+    "ticker": "IP",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Memphis, Tennessee",
+    "primary_segments": ["pulp_paper", "packaging"],
+    "website": "https://www.internationalpaper.com"
+  },
+  {
+    "name": "Tata Steel",
+    "ticker": "TATASTEEL.NS",
+    "exchange": "National Stock Exchange of India",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Mumbai",
+    "primary_segments": ["steel"],
+    "website": "https://www.tatasteel.com"
+  }
+]

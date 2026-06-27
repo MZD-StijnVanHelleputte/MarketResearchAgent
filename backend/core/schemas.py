@@ -13,7 +13,10 @@ class ChapterDraft(BaseModel):
     plan_id: str
     text: str
     figures: dict[str, str] = Field(default_factory=dict)
-    citations: list[str] = Field(default_factory=list)
+    # Structured source records: {"id": int | None, "title": str, "url": str | None,
+    # "publisher": str | None}. "id" is None until assign_global_citation_ids() runs
+    # post-merge; "title" is always human-readable, never a raw tool/function name.
+    citations: list[dict] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     # Tool calls that failed during collection (e.g. "news_search: HTTP 429 ..."),
     # surfaced so failures are visible instead of only logged to stdout.
@@ -33,7 +36,9 @@ class MergedChapter(BaseModel):
     domain: str
     text: str
     figures: dict[str, str] = Field(default_factory=dict)
-    citations: list[str] = Field(default_factory=list)
+    # See ChapterDraft.citations for the structured shape; ids are assigned here
+    # (assign_global_citation_ids) once all domains' chapters are merged.
+    citations: list[dict] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     source_plan_ids: list[str] = Field(default_factory=list)
     # Carried over from the authoritative ChapterDraft so structured tables
@@ -54,7 +59,9 @@ class SubChapter(BaseModel):
     subdomain_label: str      # human label, e.g. "Caterpillar Inc."
     text: str
     figures: dict[str, str] = Field(default_factory=dict)
-    citations: list[str] = Field(default_factory=list)
+    # See ChapterDraft.citations for the structured shape (carries global ids by
+    # this point, filtered down to the subset relevant to this entity).
+    citations: list[dict] = Field(default_factory=list)
     contradiction_flags: list[str] = Field(default_factory=list)
     datasets: list[dict] = Field(default_factory=list)
     # Token usage for the live cost counter: {prompt_tokens, completion_tokens, requests}

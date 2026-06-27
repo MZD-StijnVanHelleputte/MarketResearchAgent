@@ -15,7 +15,11 @@ or in the pre-planning research findings. Use the resolved tickers and symbols \
 (e.g. "CAT" not "Caterpillar") in tool parameters.
 3. TOOL CALLS — include a deduplicated union of all planned tool calls. \
 Where two survivors call the same tool with different arguments, merge the \
-argument sets (e.g. combine ticker lists). Eliminate exact duplicates. \
+argument sets (e.g. combine ticker lists). Eliminate exact duplicates, including \
+when the SAME tool+arguments appears under two different domains (e.g. a commodity \
+price call tagged "commodities" in one survivor and "macro_geopolitics" in another) \
+— keep it only under the domain that most directly owns that data type (commodity \
+prices -> commodities; operator equity/financials -> customers/mining_projects). \
 Each call must have a specific value for every required parameter — no placeholders.
 4. CONFLICTS — when plans disagree on scope, prefer the highest-feasibility plan's \
 judgement and note the trade-off in the rationale.

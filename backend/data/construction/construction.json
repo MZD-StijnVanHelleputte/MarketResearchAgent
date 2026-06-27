@@ -1,0 +1,262 @@
+[
+  {
+    "name": "DEME Group",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "Belgium",
+    "hq_city": "Antwerp",
+    "primary_segments": ["dredging", "marine_works", "offshore_energy"],
+    "website": "https://www.deme-group.com"
+  },
+  {
+    "name": "Jan De Nul Group",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "Belgium",
+    "hq_city": "Hofstade-Aalst",
+    "primary_segments": ["dredging", "marine_works", "civil_engineering"],
+    "website": "https://www.jandenul.com"
+  },
+  {
+    "name": "Besix Group",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "Belgium",
+    "hq_city": "Brussels",
+    "primary_segments": ["infrastructure", "civil_engineering", "industrial_construction"],
+    "website": "https://www.besix.com"
+  },
+  {
+    "name": "Aertssen Group",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "Belgium",
+    "hq_city": "Stabroek",
+    "primary_segments": ["earthworks", "demolition", "industrial_construction"],
+    "website": "https://www.aertssen.be"
+  },
+  {
+    "name": "Vinci SA",
+    "ticker": "DG.PA",
+    "exchange": "Euronext Paris",
+    "is_private": false,
+    "hq_country": "France",
+    "hq_city": "Rueil-Malmaison",
+    "primary_segments": ["infrastructure", "civil_engineering", "energy"],
+    "website": "https://www.vinci.com"
+  },
+  {
+    "name": "Bouygues SA",
+    "ticker": "EN.PA",
+    "exchange": "Euronext Paris",
+    "is_private": false,
+    "hq_country": "France",
+    "hq_city": "Paris",
+    "primary_segments": ["infrastructure", "residential", "civil_engineering"],
+    "website": "https://www.bouygues.com"
+  },
+  {
+    "name": "Eiffage SA",
+    "ticker": "FGR.PA",
+    "exchange": "Euronext Paris",
+    "is_private": false,
+    "hq_country": "France",
+    "hq_city": "Asnieres-sur-Seine",
+    "primary_segments": ["infrastructure", "civil_engineering"],
+    "website": "https://www.eiffage.com"
+  },
+  {
+    "name": "Hochtief AG",
+    "ticker": "HOT.DE",
+    "exchange": "Xetra",
+    "is_private": false,
+    "hq_country": "Germany",
+    "hq_city": "Essen",
+    "primary_segments": ["infrastructure", "industrial_construction"],
+    "website": "https://www.hochtief.com"
+  },
+  {
+    "name": "Strabag SE",
+    "ticker": "STR.VI",
+    "exchange": "Vienna Stock Exchange",
+    "is_private": false,
+    "hq_country": "Austria",
+    "hq_city": "Vienna",
+    "primary_segments": ["infrastructure", "civil_engineering", "tunnelling"],
+    "website": "https://www.strabag.com"
+  },
+  {
+    "name": "Skanska AB",
+    "ticker": "SKA-B.ST",
+    "exchange": "Nasdaq Stockholm",
+    "is_private": false,
+    "hq_country": "Sweden",
+    "hq_city": "Stockholm",
+    "primary_segments": ["infrastructure", "residential", "civil_engineering"],
+    "website": "https://www.skanska.com"
+  },
+  {
+    "name": "ACS Group",
+    "ticker": "ACS.MC",
+    "exchange": "Bolsa de Madrid",
+    "is_private": false,
+    "hq_country": "Spain",
+    "hq_city": "Madrid",
+    "primary_segments": ["infrastructure", "civil_engineering"],
+    "website": "https://www.grupoacs.com"
+  },
+  {
+    "name": "Ferrovial SE",
+    "ticker": "FER.MC",
+    "exchange": "Bolsa de Madrid",
+    "is_private": false,
+    "hq_country": "Spain",
+    "hq_city": "Madrid",
+    "primary_segments": ["infrastructure", "transport"],
+    "website": "https://www.ferrovial.com"
+  },
+  {
+    "name": "China State Construction Engineering Corp",
+    "ticker": "601668.SS",
+    "exchange": "Shanghai Stock Exchange",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Beijing",
+    "primary_segments": ["infrastructure", "residential", "industrial_construction"],
+    "website": "https://www.cscec.com"
+  },
+  {
+    "name": "China Communications Construction Co",
+    "ticker": "1800.HK",
+    "exchange": "Hong Kong Stock Exchange",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Beijing",
+    "primary_segments": ["infrastructure", "dredging", "transport"],
+    "website": "https://www.ccccltd.cn"
+  },
+  {
+    "name": "China Railway Group",
+    "ticker": "0390.HK",
+    "exchange": "Hong Kong Stock Exchange",
+    "is_private": false,
+    "hq_country": "China",
+    "hq_city": "Beijing",
+    "primary_segments": ["infrastructure", "rail", "tunnelling"],
+    "website": "https://www.crecg.com"
+  },
+  {
+    "name": "Bechtel Corporation",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "United States",
+    "hq_city": "Reston, Virginia",
+    "primary_segments": ["infrastructure", "energy", "industrial_construction"],
+    "website": "https://www.bechtel.com"
+  },
+  {
+    "name": "Fluor Corporation",
+    "ticker": "FLR",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Irving, Texas",
+    "primary_segments": ["infrastructure", "energy", "industrial_construction"],
+    "website": "https://www.fluor.com"
+  },
+  {
+    "name": "Kiewit Corporation",
+    "ticker": null,
+    "exchange": null,
+    "is_private": true,
+    "hq_country": "United States",
+    "hq_city": "Omaha, Nebraska",
+    "primary_segments": ["infrastructure", "civil_engineering", "transport"],
+    "website": "https://www.kiewit.com"
+  },
+  {
+    "name": "AECOM",
+    "ticker": "ACM",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Dallas, Texas",
+    "primary_segments": ["infrastructure", "engineering_services"],
+    "website": "https://www.aecom.com"
+  },
+  {
+    "name": "Larsen & Toubro",
+    "ticker": "LT.NS",
+    "exchange": "National Stock Exchange of India",
+    "is_private": false,
+    "hq_country": "India",
+    "hq_city": "Mumbai",
+    "primary_segments": ["infrastructure", "industrial_construction", "civil_engineering"],
+    "website": "https://www.larsentoubro.com"
+  },
+  {
+    "name": "Obayashi Corporation",
+    "ticker": "1802.T",
+    "exchange": "Tokyo Stock Exchange",
+    "is_private": false,
+    "hq_country": "Japan",
+    "hq_city": "Tokyo",
+    "primary_segments": ["infrastructure", "residential", "civil_engineering"],
+    "website": "https://www.obayashi.co.jp"
+  },
+  {
+    "name": "Shimizu Corporation",
+    "ticker": "1803.T",
+    "exchange": "Tokyo Stock Exchange",
+    "is_private": false,
+    "hq_country": "Japan",
+    "hq_city": "Tokyo",
+    "primary_segments": ["infrastructure", "residential", "industrial_construction"],
+    "website": "https://www.shimz.co.jp"
+  },
+  {
+    "name": "PORR AG",
+    "ticker": "POS.VI",
+    "exchange": "Vienna Stock Exchange",
+    "is_private": false,
+    "hq_country": "Austria",
+    "hq_city": "Vienna",
+    "primary_segments": ["infrastructure", "civil_engineering"],
+    "website": "https://www.porr-group.com"
+  },
+  {
+    "name": "Lennar Corporation",
+    "ticker": "LEN",
+    "exchange": "NYSE",
+    "is_private": false,
+    "hq_country": "United States",
+    "hq_city": "Miami, Florida",
+    "primary_segments": ["residential"],
+    "website": "https://www.lennar.com"
+  },
+  {
+    "name": "Persimmon plc",
+    "ticker": "PSN.L",
+    "exchange": "London Stock Exchange",
+    "is_private": false,
+    "hq_country": "United Kingdom",
+    "hq_city": "York",
+    "primary_segments": ["residential"],
+    "website": "https://www.persimmonhomes.com"
+  },
+  {
+    "name": "Barratt Developments",
+    "ticker": "BDEV.L",
+    "exchange": "London Stock Exchange",
+    "is_private": false,
+    "hq_country": "United Kingdom",
+    "hq_city": "Coalville",
+    "primary_segments": ["residential"],
+    "website": "https://www.barrattdevelopments.co.uk"
+  }
+]

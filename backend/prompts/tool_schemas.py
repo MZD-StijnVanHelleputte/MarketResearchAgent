@@ -3,6 +3,12 @@ Each entry mirrors the Pydantic input_schema of the corresponding tool."""
 
 from config import settings as _settings
 
+def _news_search_max_lookback_days() -> int:
+    if _settings.newsapi_tier == "premium":
+        return _settings.newsapi_premium_max_lookback_days
+    return _settings.newsapi_free_max_lookback_days
+
+
 NEWS_SEARCH_SCHEMA: dict = {
     "type": "function",
     "function": {
@@ -33,6 +39,9 @@ NEWS_SEARCH_SCHEMA: dict = {
                     "description": (
                         "Earliest article date in YYYY-MM-DD format. "
                         "Defaults to 30 days ago if omitted. "
+                        f"Current plan ('{_settings.newsapi_tier}') only has articles "
+                        f"from the last {_news_search_max_lookback_days()} days; "
+                        "older dates are clamped to that window. "
                         "For trend analysis use 90 days; for breaking news use 7 days."
                     ),
                 },
@@ -545,7 +554,8 @@ MASTERDATA_LOOKUP_SCHEMA: dict = {
         "name": "masterdata_lookup",
         "description": (
             "Query Komatsu's internal master-data registry. "
-            "entity_type: distributors | competitors | operators | equipment | commodities. "
+            "entity_type: distributors | competitors | operators | construction | others | "
+            "equipment | commodities. "
             "Filter by region (e.g. 'Asia-Pacific') or keyword (name, country, ticker, product)."
         ),
         "parameters": {
@@ -553,8 +563,17 @@ MASTERDATA_LOOKUP_SCHEMA: dict = {
             "properties": {
                 "entity_type": {
                     "type": "string",
-                    "description": "One of: distributors, competitors, operators, equipment, commodities.",
-                    "enum": ["distributors", "competitors", "operators", "equipment", "commodities"],
+                    "description": (
+                        "One of: distributors, competitors, operators, construction, others, "
+                        "equipment, commodities. 'operators' = mining operators, "
+                        "'construction' = construction & infrastructure contractors, "
+                        "'others' = niche industrial buyers (recyclers, steelmakers, "
+                        "pulp/paper producers) — all three are Komatsu customer segments."
+                    ),
+                    "enum": [
+                        "distributors", "competitors", "operators", "construction",
+                        "others", "equipment", "commodities",
+                    ],
                 },
                 "region": {
                     "type": "string",

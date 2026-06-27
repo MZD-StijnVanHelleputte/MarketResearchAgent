@@ -142,14 +142,24 @@ async def record_live_source(
             if row is None:
                 return
             existing = list(row.get("sources") or [])
-            # Dedup: skip if an equivalent row (same domain/tool/label/failed) is present.
-            key = (domain, display, label, failed)
-            if any(
-                (s.get("domain"), s.get("tool"), s.get("label"), s.get("failed")) == key
-                for s in existing
-            ):
-                return
-            existing.append(entry)
+            # Same tool/label may report a different status across attempts (e.g. a
+            # failed call followed by a successful repair retry) — key on
+            # domain/tool/label only, and replace the stale row in place rather than
+            # appending a second one, so a later success clears an earlier failure.
+            key = (domain, display, label)
+            match_idx = next(
+                (
+                    i for i, s in enumerate(existing)
+                    if (s.get("domain"), s.get("tool"), s.get("label")) == key
+                ),
+                None,
+            )
+            if match_idx is not None:
+                if existing[match_idx].get("failed") == failed:
+                    return
+                existing[match_idx] = entry
+            else:
+                existing.append(entry)
             await store.upsert_run(
                 run_id, row.get("session_id", ""), row.get("query"),
                 status="running", stage=ctx.get("stage") or "collect",

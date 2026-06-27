@@ -83,6 +83,42 @@ def test_all_distributors_have_website(svc):
         assert "website" in item and item["website"], f"Missing website for distributor: {item.get('name')}"
 
 
+def test_get_construction_nonempty(svc):
+    construction = svc.get_construction()
+    assert isinstance(construction, list)
+    assert len(construction) > 0
+
+
+def test_get_others_nonempty(svc):
+    others = svc.get_others()
+    assert isinstance(others, list)
+    assert len(others) > 0
+
+
+def test_construction_have_required_fields_and_private_flag(svc):
+    for item in svc.get_construction():
+        assert "is_private" in item, f"Missing is_private for: {item.get('name')}"
+        assert "primary_segments" in item and item["primary_segments"], \
+            f"Missing primary_segments for: {item.get('name')}"
+        assert "website" in item and item["website"], f"Missing website for: {item.get('name')}"
+        if item["is_private"]:
+            assert item.get("ticker") is None, f"Private construction co. should have null ticker: {item.get('name')}"
+        else:
+            assert item.get("ticker"), f"Listed construction co. missing ticker: {item.get('name')}"
+
+
+def test_others_have_required_fields_and_private_flag(svc):
+    for item in svc.get_others():
+        assert "is_private" in item, f"Missing is_private for: {item.get('name')}"
+        assert "primary_segments" in item and item["primary_segments"], \
+            f"Missing primary_segments for: {item.get('name')}"
+        assert "website" in item and item["website"], f"Missing website for: {item.get('name')}"
+        if item["is_private"]:
+            assert item.get("ticker") is None, f"Private 'others' co. should have null ticker: {item.get('name')}"
+        else:
+            assert item.get("ticker"), f"Listed 'others' co. missing ticker: {item.get('name')}"
+
+
 # --- lookup() tests ---
 
 def test_lookup_distributors_all(svc):
@@ -105,6 +141,18 @@ def test_lookup_operators_all(svc):
 
 def test_lookup_equipment_all(svc):
     results = svc.lookup("equipment")
+    assert isinstance(results, list)
+    assert len(results) > 0
+
+
+def test_lookup_construction_all(svc):
+    results = svc.lookup("construction")
+    assert isinstance(results, list)
+    assert len(results) > 0
+
+
+def test_lookup_others_all(svc):
+    results = svc.lookup("others")
     assert isinstance(results, list)
     assert len(results) > 0
 

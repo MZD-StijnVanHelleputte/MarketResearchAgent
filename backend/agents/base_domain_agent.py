@@ -15,6 +15,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import re
 from abc import ABC
 
 from crewai import Agent, Crew, LLM, Task
@@ -26,6 +27,7 @@ from core.event_logger import log_event, set_run_context
 from core.friendly_names import friendly_domain, friendly_tool
 from core.schemas import ChapterDraft
 from core.tool_router import async_route, is_permanent_tool_error
+from models.json_repair import extract_json_field
 from models.llm_client import LLMClient
 from models.llm_retry import call_with_backoff, crew_semaphore
 from models.usage import crew_usage, llm_usage, merge_usage
@@ -33,6 +35,26 @@ from prompts.domain_agent_prompt import DOMAIN_TASK_TEMPLATE, TOOL_REPAIR_TEMPLA
 from tools.registry import tool_display_name
 
 logger = logging.getLogger(__name__)
+
+# FRED tools whose only required argument is a series_id the planner guessed —
+# these get an extra discovery-based recovery step on a permanent "series does
+# not exist" error (see _resolve_fred_series_id) instead of failing fast.
+_FRED_ID_TOOLS = {"get_macro_indicator", "get_fred_observations"}
+
+# Argument keys, in priority order, that best identify *what* a tool call is
+# fetching (e.g. "CAT" for a ticker lookup) — used to make live progress
+# labels concrete instead of just naming the tool.
+_IDENTIFIER_KEYS = ("ticker", "symbol", "series_id", "query", "commodity", "name", "entity_name")
+
+
+def _primary_argument(arguments: dict) -> str | None:
+    """Best-effort identifier for a tool call's arguments, for progress labels."""
+    for key in _IDENTIFIER_KEYS:
+        if arguments.get(key):
+            return str(arguments[key])
+    if len(arguments) == 1:
+        return str(next(iter(arguments.values())))
+    return None
 
 
 def _load_json(raw: str) -> dict | None:
@@ -105,9 +127,11 @@ class BaseDomainAgent(ABC):
             tool_name = tc.get("tool", "")
             # PlannedToolCall uses "params"; CandidatePlan tool_calls use "arguments".
             arguments = tc.get("params") or tc.get("arguments") or {}
+            identifier = _primary_argument(arguments)
+            suffix = f": {identifier}" if identifier else ""
             await log_event(
                 "progress",
-                f"Fetching {friendly_tool(tool_name)} for {friendly_domain(self.DOMAIN)}…",
+                f"Fetching {friendly_tool(tool_name)}{suffix} for {friendly_domain(self.DOMAIN)}…",
             )
             async with sem:
                 result, usages, error = await self._call_tool_with_repair(tool_name, arguments)
@@ -175,6 +199,22 @@ class BaseDomainAgent(ABC):
             # never be fixed by retrying with adapted arguments — skip the LLM repair
             # loop and fail fast instead of burning several LLM round-trips.
             if is_permanent_tool_error(exc):
+                series_id = arguments.get("series_id")
+                if tool_name in _FRED_ID_TOOLS and series_id:
+                    resolved_id = await self._resolve_fred_series_id(series_id)
+                    if resolved_id and resolved_id != series_id:
+                        new_args = {**arguments, "series_id": resolved_id}
+                        try:
+                            result = await async_route(tool_name, new_args)
+                            await log_event(
+                                "progress",
+                                f"Resolved FRED series '{series_id}' → "
+                                f"'{resolved_id}' via discovery.",
+                                detail={"original": series_id, "resolved": resolved_id},
+                            )
+                            return result, repair_usages, None
+                        except Exception as exc2:
+                            last_error = str(exc2)
                 return None, repair_usages, last_error
 
         current_args = dict(arguments)
@@ -225,6 +265,38 @@ class BaseDomainAgent(ABC):
             return None, {}
         return _load_json(response.content or ""), llm_usage(response.usage)
 
+    @staticmethod
+    async def _resolve_fred_series_id(series_id: str) -> str | None:
+        """Recover a real FRED series_id when the planner guessed one that doesn't
+        exist, by querying FRED's own discovery endpoints: series/search first
+        (free-text, https://fred.stlouisfed.org/docs/api/fred/series_search.html),
+        falling back to tags/series (https://fred.stlouisfed.org/docs/api/fred/tags_series.html)
+        if the search comes up empty. Returns None if neither finds a match."""
+        tokens = [t for t in re.split(r"[_\-]+", series_id) if t]
+        query = " ".join(tokens) or series_id
+
+        try:
+            search_result = await async_route(
+                "search_fred_series", {"search_text": query, "limit": 5}
+            )
+        except Exception:
+            search_result = None
+        candidates = (search_result or {}).get("results") or []
+        if candidates:
+            return candidates[0].get("series_id")
+
+        tag_names = ";".join(t.lower() for t in tokens if len(t) > 2)
+        if not tag_names:
+            return None
+        try:
+            tags_result = await async_route(
+                "get_fred_series_by_tags", {"tag_names": tag_names, "limit": 5}
+            )
+        except Exception:
+            return None
+        candidates = (tags_result or {}).get("results") or []
+        return candidates[0].get("series_id") if candidates else None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -249,7 +321,7 @@ class BaseDomainAgent(ABC):
             description=prompt,
             expected_output=(
                 "A JSON object with keys: domain, plan_id, text, figures, "
-                "citations, contradiction_flags"
+                "contradiction_flags"
             ),
             agent=agent,
         )
@@ -262,6 +334,11 @@ class BaseDomainAgent(ABC):
 
         result = call_with_backoff(_run_crew)
         draft = self._parse_result(str(result), plan_id)
+        # Citation identity is always code-derived, never LLM-authored — an LLM
+        # asked to "list source identifiers" will happily cite a tool/agent name
+        # or scaffolding text instead of a real source, so its output (if any)
+        # is discarded in favor of deterministic extraction from raw_results.
+        draft.citations = self._extract_citations(raw_results)
         draft.usage = merge_usage(draft.usage, crew_usage(result))
         return draft
 
@@ -280,11 +357,94 @@ class BaseDomainAgent(ABC):
             data.setdefault("plan_id", plan_id)
             return ChapterDraft.model_validate(data)
         except (json.JSONDecodeError, ValidationError):
-            return ChapterDraft(
-                domain=self.DOMAIN,
-                plan_id=plan_id,
-                text=raw_output,
+            pass
+
+        # Full envelope didn't parse — recover at least the prose so a malformed
+        # sibling key (e.g. a stray quote in "citations") doesn't leak raw JSON
+        # into the report. If even that fails, let the caller's fallback (which
+        # preserves figures/citations from the raw tool results) take over.
+        recovered_text = extract_json_field(raw_output, "text")
+        if recovered_text is None:
+            raise ValueError(
+                f"could not parse domain agent response for {self.DOMAIN}: {raw_output[:200]!r}"
             )
+        return ChapterDraft(
+            domain=self.DOMAIN,
+            plan_id=plan_id,
+            text=recovered_text,
+        )
+
+    @staticmethod
+    def _citation_key(citation: dict) -> tuple:
+        """Dedup key for a citation dict: by URL when present, else title+publisher."""
+        url = (citation.get("url") or "").strip().lower()
+        if url:
+            return ("url", url)
+        return ("title", (citation.get("title") or "").strip().lower(),
+                (citation.get("publisher") or "").strip().lower())
+
+    @staticmethod
+    def _extract_citations(raw_results: list[dict]) -> list[dict]:
+        """Deterministically derive structured citations from raw tool results.
+
+        Mirrors the shape detection in _to_datasets()/_fallback() but emits
+        {"id": None, "title", "url", "publisher"} records instead of free text,
+        so the LLM is never the source of a citation's identity (see _run_crew).
+        Tool results with no document/URL (commodity/FRED/financials series) get
+        a real human title via tool_display_name() — never the raw tool name.
+        """
+        citations: list[dict] = []
+        seen: set = set()
+
+        def _add(title: str, url: str | None = None, publisher: str | None = None) -> None:
+            if not title:
+                return
+            citation = {"id": None, "title": title, "url": url or None, "publisher": publisher or None}
+            key = BaseDomainAgent._citation_key(citation)
+            if key not in seen:
+                seen.add(key)
+                citations.append(citation)
+
+        for entry in raw_results:
+            tool = entry.get("tool", "") or "unknown"
+            result = entry.get("result", {})
+            if not isinstance(result, dict):
+                continue
+
+            if "articles" in result:
+                for a in result["articles"] or []:
+                    if isinstance(a, dict):
+                        _add(a.get("title", ""), a.get("url") or a.get("link"), a.get("source"))
+            elif "results" in result:
+                for r in result["results"] or []:
+                    if isinstance(r, dict):
+                        _add(r.get("title", ""), r.get("url") or r.get("link"))
+            elif "filings" in result:
+                for f in result["filings"] or []:
+                    if isinstance(f, dict):
+                        name = f.get("entity_name", "")
+                        form = f.get("form_type", "")
+                        title = f"{name} — {form}".strip(" —")
+                        _add(title, f.get("url") or f.get("filing_url"), "SEC EDGAR")
+            elif "technical_report" in result:
+                tr = result.get("technical_report") or {}
+                company = tr.get("company_name", "")
+                form = tr.get("form_type", "")
+                title = tr.get("exhibit_name") or f"{company} — {form} Exhibit 96".strip(" —")
+                _add(title, tr.get("exhibit_url"), "SEC EDGAR")
+            elif "report" in result and "citations" in result:
+                # web_research (Tavily) ResearchReport shape: AI-synthesized report
+                # backed by a flat list of source URLs, with no per-URL title.
+                for url in result.get("citations") or []:
+                    if isinstance(url, str) and url:
+                        _add(url, url)
+            else:
+                # Data-only tool results (commodity series, FRED, financials, masterdata)
+                # carry no document/URL — title is a real provider-aware label, never
+                # the raw tool function name.
+                _add(tool_display_name(tool), None, result.get("source"))
+
+        return citations
 
     @staticmethod
     def _to_datasets(raw_results: list[dict]) -> list[dict]:
@@ -428,7 +588,7 @@ class BaseDomainAgent(ABC):
     def _fallback(self, plan_id: str, raw_results: list[dict]) -> ChapterDraft:
         """Format raw tool results as plain text without an LLM call."""
         lines: list[str] = []
-        citations: list[str] = []
+        citations = self._extract_citations(raw_results)
         figures: dict[str, str] = {}
         for entry in raw_results:
             tool = entry.get("tool", "")
@@ -459,38 +619,27 @@ class BaseDomainAgent(ABC):
                 for a in result["articles"][:3]:
                     title = a.get("title", "")
                     desc = a.get("description", "")
-                    url = a.get("url") or a.get("link")
                     if title or desc:
                         lines.append(f"[{tool}] {title} — {desc}")
-                    if url:
-                        citations.append(url)
             elif "results" in result:
                 for r in result["results"][:3]:
                     title = r.get("title", "")
                     content = r.get("content", r.get("snippet", ""))
-                    url = r.get("url") or r.get("link")
                     if title or content:
                         lines.append(f"[{tool}] {title} — {content}")
-                    if url:
-                        citations.append(url)
             elif "filings" in result:
                 for f in result["filings"][:3]:
                     name = f.get("entity_name", "")
                     form = f.get("form_type", "")
                     fdate = f.get("file_date", "")
-                    url = f.get("url") or f.get("filing_url")
                     if name or form:
                         lines.append(f"[{tool}] {name} — {form} ({fdate})")
-                    if url:
-                        citations.append(url)
             elif "technical_report" in result:
                 tr = result.get("technical_report") or {}
                 lines.append(
                     f"[{tool}] {tr.get('company_name', '')} {tr.get('form_type', '')} "
                     f"Exhibit 96 ({tr.get('filing_date', '')}): {tr.get('excerpt', '')[:300]}"
                 )
-                if tr.get("exhibit_url"):
-                    citations.append(tr["exhibit_url"])
             else:
                 summary = str(result)[:300]
                 if summary:

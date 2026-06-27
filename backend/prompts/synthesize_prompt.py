@@ -48,6 +48,9 @@ The user's original research question for this run is: "{research_question}"
 Entity-specific evidence collected during this run:
 {evidence_json}
 
+Available sources (cite ONLY these, by number — never invent a source):
+{available_sources}
+
 Additional context retrieved from the knowledge base and collected sources:
 {retrieved_chunks_text}
 
@@ -57,7 +60,9 @@ do NOT discuss other entities except for direct comparison where the evidence de
 2. Open by stating directly how this entity's evidence bears on the research question above — \
 do not just describe the entity in the abstract.
 3. Incorporate the key numeric figures from the evidence; cite factual claims inline as \
-[Source: <citation>].
+[Source: <id>], where <id> is one of the numbers from the "Available sources" list above. \
+Never invent, paraphrase, or substitute a different label — if no listed source supports a \
+claim, omit the marker entirely.
 4. If the evidence is thin or contradictory, say so explicitly rather than padding.
 5. Do NOT invent figures or facts not present in the evidence above.
 6. The reader will see an accompanying chart or table with the full data series directly \
@@ -103,6 +108,8 @@ compare the data here rather than re-listing every individual figure already sho
 exchange code (e.g. do not write "6305.T" or "000425.SZ" in place of the name). A ticker may \
 appear once in parentheses after the first mention if useful, but must never substitute for \
 the name.
+9. Preserve any [Source: <id>] markers attached to facts you carry forward from the \
+entity analyses — do not drop them when paraphrasing.
 
 Respond with ONLY a valid JSON object with keys: domain, text.
 """
@@ -144,6 +151,10 @@ Rules:
 - Draw conclusions and implications; do not merely describe what the articles say.
 - Ground every claim in the source data; do not invent facts.
 - Flag contradictions or thin evidence explicitly.
+- Content scraped from a company's own website (no publish date attached) reflects \
+that page's state when collected, not a verified-current fact — describe it as the \
+company's current stated position rather than a dated event, and if it conflicts \
+with a more recent dated news item, prefer the dated source.
 - Always refer to companies by their full name, never by a bare stock ticker or numeric \
 exchange code (e.g. do not write "6305.T" or "000425.SZ" in place of the name). A ticker may \
 appear once in parentheses after the first mention if useful, but must never substitute for \

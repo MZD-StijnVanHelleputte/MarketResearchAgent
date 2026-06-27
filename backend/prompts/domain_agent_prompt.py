@@ -43,15 +43,14 @@ Instructions:
      "CAT_revenue_2024": "$64.8B"
      "copper_spot_price_usd_per_lb": "4.12"
    Use descriptive snake_case metric names. Include units in the value string.
-3. List all source URLs or identifiers in "citations" (one per item).
-4. If two sources report conflicting values for the same metric, add a note to
+3. If two sources report conflicting values for the same metric, add a note to
    "contradiction_flags" describing the conflict (e.g.,
    "FMP reports CAT revenue $64.8B but news article cites $63.2B").
-5. Write a concise analytical summary in "text" (2-4 paragraphs). Focus on
+4. Write a concise analytical summary in "text" (2-4 paragraphs). Focus on
    signals relevant to Komatsu's competitive position.
 
 Respond with ONLY a valid JSON object (no markdown fences, no other text) with
-exactly these keys: domain, plan_id, text, figures, citations, contradiction_flags.
+exactly these keys: domain, plan_id, text, figures, contradiction_flags.
 
 domain: "{domain}"
 plan_id: "{plan_id}"
@@ -63,8 +62,12 @@ the final polished chapter for the "{domain}" domain of the intelligence brief.
 
 The user's original research question for this run is: "{research_question}"
 
-Merged chapter draft (figures and raw analysis):
+INTERNAL INPUT DATA (figures and raw analysis collected this run — not a citable
+source; never reference this label or any internal tool/agent name as a source):
 {merged_chapter_json}
+
+Available sources (cite ONLY these, by number — never invent a source label):
+{available_sources}
 
 Additional context retrieved from the knowledge base and past reports:
 {retrieved_chunks_text}
@@ -75,15 +78,17 @@ Instructions:
 2. Open by stating directly how this domain's evidence bears on the research question
    above, then build the rest of the chapter around that answer — do not just survey
    the domain in the abstract.
-3. Incorporate the key numeric figures from the merged chapter draft's "figures"
+3. Incorporate the key numeric figures from the internal input data's "figures"
    field directly into the prose — especially prices, growth rates, and volumes
    (e.g. "copper at $4.12/lb"). Every figure provided should be referenced.
-4. Cite every factual claim using inline references like [Source: <citation>].
+4. Cite factual claims inline as [Source: <id>], where <id> is one of the numbers
+   from the "Available sources" list above. Never invent, paraphrase, or substitute
+   a different label — if no listed source supports a claim, omit the marker entirely.
 5. Highlight the top 2-3 strategic implications for Komatsu, tied back to the
    research question where relevant.
 6. If any contradiction_flags are present in the draft, note them clearly
    with "Note: conflicting signals — <description>".
-7. Do NOT invent figures that are not in the merged chapter draft.
+7. Do NOT invent figures that are not in the internal input data.
 8. The reader will see an accompanying chart or table with the full data series directly
    below this text — ground your interpretation in that data rather than re-listing
    every individual figure already visible there.

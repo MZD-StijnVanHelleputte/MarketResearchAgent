@@ -10,7 +10,13 @@ import logging
 import re
 
 from config import settings
-from core.tot.schemas import CandidatePlan, ConsolidatedPlan, PlannedToolCall, ResearchContext
+from core.tot.schemas import (
+    CandidatePlan,
+    ConsolidatedPlan,
+    DATASET_OWNERSHIP_PRIORITY,
+    PlannedToolCall,
+    ResearchContext,
+)
 from models.llm_client import LLMClient
 from prompts.plan_merge_prompt import plan_merge_messages
 
@@ -80,6 +86,29 @@ def _expand_per_ticker_calls(
     return expanded
 
 
+_OWNERSHIP_RANK = {d: i for i, d in enumerate(DATASET_OWNERSHIP_PRIORITY)}
+
+
+def _dedupe_cross_domain(calls: list[PlannedToolCall]) -> list[PlannedToolCall]:
+    """Collapse identical tool+params calls that were assigned to more than one
+    domain, keeping only the highest-priority domain's copy (DATASET_OWNERSHIP_PRIORITY).
+
+    Without this, e.g. both "commodities" and "macro_geopolitics" can independently
+    call get_mining_metals_prices(COPPER) for the same plan, doubling the API call
+    and producing the same data in two report chapters.
+    """
+    best: dict[str, PlannedToolCall] = {}
+    for tc in calls:
+        key = f"{tc.tool}:{json.dumps(tc.params, sort_keys=True, default=str)}"
+        existing = best.get(key)
+        if existing is None or (
+            _OWNERSHIP_RANK.get(tc.domain, len(_OWNERSHIP_RANK))
+            < _OWNERSHIP_RANK.get(existing.domain, len(_OWNERSHIP_RANK))
+        ):
+            best[key] = tc
+    return list(best.values())
+
+
 def _parse_consolidated_json(raw: str) -> dict:
     """Extract JSON from the LLM's merger response."""
     text = raw.strip()
@@ -107,19 +136,19 @@ def _fallback_merge(
         if active
     })
 
-    # Union of all tool calls across survivors (deduplicated by tool name + params)
-    seen: set[str] = set()
-    planned_calls: list[PlannedToolCall] = []
-    for p in survivors:
-        for tc in p.tool_calls:
-            key = f"{tc.get('tool')}:{json.dumps(tc.get('arguments', {}), sort_keys=True)}"
-            if key not in seen:
-                seen.add(key)
-                planned_calls.append(PlannedToolCall(
-                    tool=tc.get("tool", ""),
-                    params=tc.get("arguments", {}),
-                    domain=tc.get("domain", "general_search"),
-                ))
+    # Union of all tool calls across survivors, then collapse any tool+params
+    # call that multiple survivors assigned to different domains down to one
+    # (highest-priority domain wins — see _dedupe_cross_domain).
+    planned_calls: list[PlannedToolCall] = [
+        PlannedToolCall(
+            tool=tc.get("tool", ""),
+            params=tc.get("arguments", {}),
+            domain=tc.get("domain", "general_search"),
+        )
+        for p in survivors
+        for tc in p.tool_calls
+    ]
+    planned_calls = _dedupe_cross_domain(planned_calls)
 
     top = survivors[0]
     avg_feasibility = sum(p.feasibility_score for p in survivors) / len(survivors)
@@ -219,6 +248,10 @@ class PlanMerger:
             planned_calls = _expand_per_ticker_calls(
                 planned_calls, {"tickers": research_context.tickers},
             )
+            # The LLM merger is asked to dedupe tool calls but isn't reliable about
+            # catching the same tool+params assigned to two different domains under
+            # different "angles" — enforce that deterministically.
+            planned_calls = _dedupe_cross_domain(planned_calls)
             consolidated = ConsolidatedPlan(
                 **{k: v for k, v in data.items() if k in ConsolidatedPlan.model_fields},
                 planned_tool_calls=planned_calls,

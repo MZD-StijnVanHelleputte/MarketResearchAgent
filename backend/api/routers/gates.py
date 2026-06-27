@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["gates"])
 
+# Stage a run advances to immediately once a gate is approved. Without this,
+# the DB row would keep showing the stale pre-gate stage (e.g. "understand"
+# for gate 1) until the background _resume_graph task actually executes the
+# next node, making the UI briefly look like the gate didn't close anything.
+_APPROVE_NEXT_STAGE = {1: "collect", 2: "synthesize", 3: "done"}
+
 
 def _episodic_summary(run: dict, plan: dict | None) -> str:
     """Build the one-chunk episodic document from a finished run + its winning plan."""
@@ -77,7 +83,7 @@ async def approve_gate(
     await store.upsert_run(
         run_id, session_id, query,
         status="running",
-        stage=run.get("stage", ""),
+        stage=_APPROVE_NEXT_STAGE.get(gate, run.get("stage", "")),
     )
     background_tasks.add_task(_resume_graph, run_id, session_id, query, "approve")
     return GateDecisionResponse(run_id=run_id, gate=gate, decision="approve", next_status="running")

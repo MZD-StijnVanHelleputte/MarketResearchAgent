@@ -234,7 +234,7 @@ public record SourceDto(
     int Count = 0,
     bool Failed = false,
     string? Reason = null);
-public record RunStatus(string Status, string Stage, string? Brief, string? Error, List<SourceDto>? Sources, JsonElement? GateData = null, string? StatusMessage = null, List<string>? ActivityLog = null, string? ExecSummary = null, List<string>? Warnings = null);
+public record RunStatus(string Status, string Stage, string? Brief, string? Error, List<SourceDto>? Sources, JsonElement? GateData = null, string? StatusMessage = null, List<string>? ActivityLog = null, string? ExecSummary = null, List<string>? Warnings = null, int? ToolCallsTotal = null, int? ToolCallsCompleted = null, string? CurrentToolLabel = null, string? CurrentDomain = null);
 
 // Test runner
 public record TestRunResult(bool Passed, string Output);

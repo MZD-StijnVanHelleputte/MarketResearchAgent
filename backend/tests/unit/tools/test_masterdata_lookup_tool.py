@@ -39,6 +39,18 @@ async def test_run_passes_keyword_filter(tool, mock_service):
 
 
 @pytest.mark.asyncio
+async def test_run_passes_construction_entity_type(tool, mock_service):
+    await tool.run(entity_type="construction")
+    mock_service.lookup.assert_called_once_with("construction", "", "")
+
+
+@pytest.mark.asyncio
+async def test_run_passes_others_entity_type(tool, mock_service):
+    await tool.run(entity_type="others")
+    mock_service.lookup.assert_called_once_with("others", "", "")
+
+
+@pytest.mark.asyncio
 async def test_run_unknown_entity_type_propagates_error(mock_service):
     mock_service.lookup.side_effect = ValueError("Unknown entity_type 'invalid'")
     tool = MasterdataLookupTool(service=mock_service)
