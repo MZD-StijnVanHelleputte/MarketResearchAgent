@@ -130,6 +130,28 @@ def _slug_key(label: str) -> str:
     return slug or label.lower()
 
 
+def build_entity_manifest(research_context: ResearchContext) -> dict:
+    """Flatten the research context into the entity manifest the planner and the
+    leaf builder consume. Shared so a preliminary plan can be emitted mid-planning
+    (understand_node) with the same shape the merger produces at the end."""
+    return {
+        "competitors": research_context.competitors,
+        "operators": research_context.operators,
+        "demand_side_companies": research_context.demand_side_companies,
+        "tickers": research_context.tickers,
+        "commodities": research_context.commodities,
+        "mine_sites": research_context.mine_sites,
+        "regions": research_context.regions,
+        "news_queries": research_context.news_signals,
+    }
+
+
+def build_preliminary_leaves(research_context: ResearchContext) -> list[ResearchLeaf]:
+    """Domain→leaf skeleton derivable from research alone, before tool calls are
+    assigned. Lets the collection-plan tree build up during Understand."""
+    return _build_leaves(build_entity_manifest(research_context), MasterDataService())
+
+
 def _build_leaves(
     entity_manifest: dict, masterdata: MasterDataService
 ) -> list[ResearchLeaf]:
@@ -249,16 +271,7 @@ def _fallback_merge(
         if g
     )
 
-    entity_manifest: dict = {
-        "competitors": research_context.competitors,
-        "operators": research_context.operators,
-        "demand_side_companies": research_context.demand_side_companies,
-        "tickers": research_context.tickers,
-        "commodities": research_context.commodities,
-        "mine_sites": research_context.mine_sites,
-        "regions": research_context.regions,
-        "news_queries": research_context.news_signals,
-    }
+    entity_manifest: dict = build_entity_manifest(research_context)
 
     planned_calls = _expand_per_ticker_calls(planned_calls, entity_manifest)
 

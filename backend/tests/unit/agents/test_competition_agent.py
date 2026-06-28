@@ -69,6 +69,49 @@ async def test_competition_agent_fallback_on_crew_failure():
 
 
 @pytest.mark.asyncio
+async def test_empty_tool_result_is_failed_tool_not_dataset():
+    plan = _make_plan(["news_search"])
+    tool_result = {"articles": []}
+
+    with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value=tool_result)), \
+         patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
+         patch("agents.base_domain_agent.LLM"):
+        agent = make_domain_agent("competition")
+        draft = await agent.run(plan, "run_001")
+
+    assert draft.failed_tools
+    assert draft.failed_tools[0]["tool"] == "news_search"
+    assert "no usable data" in draft.failed_tools[0]["reason"]
+    assert draft.datasets == []
+    assert draft.citations == []
+
+
+@pytest.mark.asyncio
+async def test_dataful_tool_result_remains_successful_dataset():
+    plan = _make_plan(["news_search"])
+    tool_result = {
+        "articles": [
+            {
+                "title": "CAT earnings",
+                "description": "CAT revenue rose.",
+                "url": "https://example.com/cat",
+            }
+        ]
+    }
+
+    with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value=tool_result)), \
+         patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
+         patch("agents.base_domain_agent.LLM"):
+        agent = make_domain_agent("competition")
+        draft = await agent.run(plan, "run_001")
+
+    assert not any(ft.get("tool") == "news_search" for ft in draft.failed_tools)
+    assert draft.datasets
+    assert draft.datasets[0]["count"] == 1
+    assert draft.citations
+
+
+@pytest.mark.asyncio
 async def test_competition_agent_empty_plan_returns_placeholder():
     # Plan has no tool_calls for competition
     plan = {

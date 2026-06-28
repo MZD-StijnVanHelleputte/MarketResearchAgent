@@ -4,6 +4,7 @@ import time
 from config import settings
 from clients.base_http_client import PERMANENT_STATUSES
 from core.event_logger import get_run_context, log_event, record_live_source
+from core.result_shape import detect_data_type_and_count
 from core import tool_circuit_breaker as breaker
 from core.tool_circuit_breaker import ToolBlockedError
 import tools.registry as registry
@@ -60,11 +61,14 @@ async def async_route(
         result = await registry.get(tool_name).run(**tool_input)
         latency_ms = int((time.monotonic() - t0) * 1000)
         first_key = next(iter(result), "ok") if isinstance(result, dict) else "ok"
+        # Coarse type + size of what this call returned, so the collection-plan tree
+        # can label each succeeded tool call (e.g. "financials · 42 rows") at Gate 2.
+        data_type, count = detect_data_type_and_count(result)
         await log_event(
             "tool_call", f"{tool_name}{domain_tag}",
             detail={
                 "args": tool_input, "result_key": first_key, "latency_ms": latency_ms,
-                "call_id": call_id,
+                "call_id": call_id, "data_type": data_type, "count": count,
             },
         )
         if count_failures:

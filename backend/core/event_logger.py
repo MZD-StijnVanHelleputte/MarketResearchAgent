@@ -82,15 +82,6 @@ def _provisional_label(tool_input: dict) -> str:
     return ""
 
 
-def _provisional_count(result: object) -> int:
-    """Best-effort row/item count from a raw tool result."""
-    if isinstance(result, dict):
-        for val in result.values():
-            if isinstance(val, list):
-                return len(val)
-    return 0
-
-
 async def record_live_source(
     tool_name: str,
     tool_input: dict,
@@ -119,15 +110,17 @@ async def record_live_source(
     try:
         from memory.sqlite_store import SqliteStore
         from tools.registry import tool_display_name
+        from core.result_shape import detect_data_type_and_count
 
         display = tool_display_name(tool_name)
+        data_type, count = ("failed", 0) if failed else detect_data_type_and_count(result)
         entry = {
             "domain": domain,
             "tool": display,
             "title": display,
-            "data_type": "failed" if failed else "data",
+            "data_type": data_type,
             "label": label,
-            "count": 0 if failed else _provisional_count(result),
+            "count": count,
             "url": None,
             "published_at": None,
             "failed": failed,

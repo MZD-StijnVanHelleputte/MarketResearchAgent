@@ -24,8 +24,9 @@ from pydantic import ValidationError
 
 import models.crewai_patches  # noqa: F401 — must run before any Agent/Crew/Task is built
 from config import settings
-from core.event_logger import get_run_context, log_event, set_run_context
+from core.event_logger import get_run_context, log_event, record_live_source, set_run_context
 from core.friendly_names import friendly_domain, friendly_tool
+from core.result_quality import has_usable_data, no_data_reason
 from core.schemas import ChapterDraft
 from core import tool_circuit_breaker as breaker
 from core.tool_router import async_route, is_permanent_tool_error
@@ -219,6 +220,11 @@ class BaseDomainAgent(ABC):
         last_exc: BaseException | None = None
         try:
             result = await async_route(tool_name, arguments, call_id, count_failures=False)
+            if not has_usable_data(result):
+                reason = no_data_reason(tool_name)
+                await self._log_tool_failed_final(tool_name, call_id, reason)
+                await record_live_source(tool_name, arguments, failed=True, reason=reason)
+                return None, repair_usages, reason
             breaker.record_success(run_id, tool_name)
             return result, repair_usages, None
         except Exception as exc:
@@ -237,6 +243,13 @@ class BaseDomainAgent(ABC):
                             result = await async_route(
                                 tool_name, new_args, call_id, count_failures=False
                             )
+                            if not has_usable_data(result):
+                                reason = no_data_reason(tool_name)
+                                await self._log_tool_failed_final(tool_name, call_id, reason)
+                                await record_live_source(
+                                    tool_name, new_args, failed=True, reason=reason
+                                )
+                                return None, repair_usages, reason
                             await log_event(
                                 "progress",
                                 f"Resolved FRED series '{series_id}' → "
@@ -281,6 +294,19 @@ class BaseDomainAgent(ABC):
                 result = await async_route(
                     tool_name, current_args, call_id, count_failures=False
                 )
+                if not has_usable_data(result):
+                    last_error = no_data_reason(tool_name)
+                    await log_event(
+                        "progress",
+                        f"Retry returned no usable data for {friendly}.",
+                        detail={"args": current_args, "reason": decision.get("reason", "")},
+                        level="warning",
+                    )
+                    await self._log_tool_failed_final(tool_name, call_id, last_error)
+                    await record_live_source(
+                        tool_name, current_args, failed=True, reason=last_error
+                    )
+                    return None, repair_usages, last_error
                 await log_event(
                     "progress",
                     f"Retry succeeded for {friendly}.",

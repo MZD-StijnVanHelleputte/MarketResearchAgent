@@ -117,6 +117,7 @@ async def _persist_stream_event(event, run_id, session_id, query, store) -> None
                 cumulative_cost_usd=output.get("cumulative_cost_usd", 0.0),
                 api_call_count=output.get("api_call_count", 0),
                 total_tokens=output.get("total_tokens", 0),
+                plans=output.get("plans") if output.get("plans") else None,
             )
 
 
@@ -425,12 +426,21 @@ async def _resume_graph(
     session_id: str,
     query: str,
     decision: str,
+    feedback: str | None = None,
 ) -> None:
-    """Resume a graph that is suspended at a gate interrupt."""
+    """Resume a graph that is suspended at a gate interrupt.
+
+    `feedback` is optional free-text guidance from a plan rejection; it is written to
+    the graph state as `redirect_feedback` so understand_node folds it into the replan.
+    """
     config = {"configurable": {"thread_id": run_id}}
     store = SqliteStore()
     existing_row = await store.get_run(run_id)
     set_run_context(run_id)
+
+    update: dict = {}
+    if feedback:
+        update["redirect_feedback"] = feedback
 
     # Exclude the time spent waiting for this decision from the soft-timeout clock.
     paused_at = existing_row.get("paused_at") if existing_row else None
@@ -439,11 +449,13 @@ async def _resume_graph(
         snapshot = await graph_module.compiled.aget_state(config)
         values = snapshot.values or {}
         prior_paused = values.get("paused_seconds", 0.0)
-        update = {"paused_seconds": prior_paused + pause_duration}
+        update["paused_seconds"] = prior_paused + pause_duration
         # Bump the rolling timeout threshold so the next soft-timeout prompt is
         # due another soft_timeout_s later, instead of re-firing on the next node.
         if existing_row.get("status") == "waiting_timeout_confirm" and decision == "approve":
             update["timeout_prompt_count"] = values.get("timeout_prompt_count", 0) + 1
+
+    if update:
         await graph_module.compiled.aupdate_state(config, update)
 
     await _drive_stream(run_id, session_id, query, store, Command(resume=decision))

@@ -248,7 +248,8 @@ public record RunStatus(string Status, string Stage, string? Brief, string? Erro
 public record CollectionPlanView(int Total, int Succeeded, int Failed, int Pending, List<CpDomain> Domains);
 public record CpDomain(string Domain, string Display, int Total, int Succeeded, int Failed, int Pending, List<CpLeaf> Leaves);
 public record CpLeaf(string Key, string Label, string LeafType, int Total, int Succeeded, int Failed, int Pending, List<CpToolCall> ToolCalls);
-public record CpToolCall(string Tool, string Display, string Status, string? Reason);
+public record CpToolCall(string Tool, string Display, string Status, string? Reason,
+    string? DataType = null, int Count = 0);
 
 // Test runner
 public record TestRunResult(bool Passed, string Output);

@@ -116,18 +116,24 @@ async def redirect_gate(
 
     session_id = run.get("session_id", "")
     query = run.get("query", "")
+    # Optional free-text guidance the user typed when rejecting a plan, threaded into
+    # the replan (Gate 1). e.g. "you forgot Liebherr / add import-tariff data".
+    feedback = (body.get("feedback") or "").strip() or None
     redirect_stage = {1: "understand", 2: "collect", 3: "synthesize"}.get(gate, "understand")
+    label = f"Gate {gate} redirected — back to {redirect_stage}."
+    if feedback:
+        label += f" Guidance: {feedback}"
     await store.log_step_event(
         run_id=run_id, ts=datetime.now(timezone.utc).isoformat(), level="info",
         stage="", domain="", event_type="progress",
-        label=f"Gate {gate} redirected — back to {redirect_stage}.", detail=None,
+        label=label, detail=None,
     )
     await store.upsert_run(
         run_id, session_id, query,
         status="running",
         stage=redirect_stage,
     )
-    background_tasks.add_task(_resume_graph, run_id, session_id, query, "redirect")
+    background_tasks.add_task(_resume_graph, run_id, session_id, query, "redirect", feedback)
     return GateDecisionResponse(run_id=run_id, gate=gate, decision="redirect", next_status="running")
 
 

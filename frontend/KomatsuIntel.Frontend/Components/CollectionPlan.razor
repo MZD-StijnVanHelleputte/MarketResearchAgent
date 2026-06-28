@@ -5,8 +5,24 @@
 <MudPaper Elevation="1" Class="pa-3">
     <MudStack Spacing="2">
 
-        @* Gate-2 accept bar — pinned at the top so the user needn't scroll. *@
-        @if (ShowApprove)
+        @* Gate accept bar — pinned at the top so the user needn't scroll. *@
+        @if (Mode == "gate1")
+        {
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.CheckCircle"
+                           OnClick="@(() => OnApprove.InvokeAsync())">
+                    Approve plan
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.Edit"
+                           OnClick="@(() => OnRequestChanges.InvokeAsync())">
+                    Request changes
+                </MudButton>
+            </MudStack>
+            <MudDivider />
+        }
+        else if (Mode == "gate2")
         {
             <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary"
@@ -71,7 +87,18 @@
                                                 <span class="cp-dot @DotClass(call.Status)"></span>
                                                 <div style="flex:1;min-width:0;">
                                                     <div class="cp-toolcall-name">@call.Display</div>
-                                                    @if (call.Status == "failed" && !string.IsNullOrWhiteSpace(call.Reason))
+                                                    @if (call.Status == "succeeded")
+                                                    {
+                                                        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px;">
+                                                            <span style="@DataTypeChipStyle(call.DataType)">@DataTypeLabel(call.DataType)</span>
+                                                            @{ var cl = CountLabel(call); }
+                                                            @if (cl.Length > 0)
+                                                            {
+                                                                <span style="font-size:0.7rem;font-weight:600;color:#6B7280;">@cl</span>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    else if (call.Status == "failed" && !string.IsNullOrWhiteSpace(call.Reason))
                                                     {
                                                         <div class="cp-toolcall-reason">@call.Reason</div>
                                                     }
@@ -92,9 +119,11 @@
 
 @code {
     [Parameter, EditorRequired] public CollectionPlanView Plan { get; set; } = default!;
-    [Parameter] public bool ShowApprove { get; set; }
+    // "live" (no action bar) · "gate1" (approve / request changes) · "gate2" (approve / re-collect)
+    [Parameter] public string Mode { get; set; } = "live";
     [Parameter] public EventCallback OnApprove { get; set; }
     [Parameter] public EventCallback OnRedirect { get; set; }
+    [Parameter] public EventCallback OnRequestChanges { get; set; }
 
     // Compact gray/green/red count widget, reused at plan, domain and leaf level.
     // Styles are inline so progress numbers stay readable even if app.css is stale.
@@ -145,4 +174,40 @@
         "failed"    => "cp-dot-failed",
         _           => "cp-dot-pending",
     };
+
+    // ── Per-tool-call result feedback (type + count) — mirrors the labels used in
+    //    the legacy Sources panel so the two read consistently. ──────────────────
+    private static string DataTypeLabel(string? dt) => dt switch
+    {
+        "numeric_series" => "numeric series",
+        "financials"     => "financials",
+        "articles"       => "news",
+        "web_results"    => "web results",
+        "filings"        => "filings",
+        "document"       => "document",
+        _                => "data",
+    };
+
+    private static string CountLabel(CpToolCall c) => c.DataType switch
+    {
+        _ when c.Count <= 0 => "",
+        "numeric_series" or "financials" => $"{c.Count} rows",
+        "articles"    => $"{c.Count} articles",
+        "web_results" => $"{c.Count} results",
+        "filings"     => $"{c.Count} filings",
+        _             => $"{c.Count}",
+    };
+
+    private const string ChipBase =
+        "display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;" +
+        "font-size:0.68rem;font-weight:700;line-height:1.4;border:1px solid;";
+
+    private static string DataTypeChipStyle(string? dt) => ChipBase + (dt switch
+    {
+        "numeric_series" or "financials" => "background:#DCFCE7;color:#166534;border-color:#BBF7D0;",
+        "articles"    => "background:#FEF3C7;color:#92400E;border-color:#FDE68A;",
+        "web_results" => "background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE;",
+        "filings"     => "background:#EDE9FE;color:#5B21B6;border-color:#DDD6FE;",
+        _             => "background:#F3F4F6;color:#374151;border-color:#E5E7EB;",
+    });
 }

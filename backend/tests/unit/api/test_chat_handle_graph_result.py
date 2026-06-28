@@ -8,6 +8,7 @@ never generated. See core/graph.py synthesize_router / api/routers/chat.py.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -129,13 +130,36 @@ async def test_gate2_interrupt_persists_plans_sources_and_gate_data(tmp_db):
         result = await _handle_graph_result(final, "run_gate2", "sess1", "copper outlook")
 
     assert result is False
-    run = await SqliteStore().get_run("run_gate2")
+    store = SqliteStore()
+    await store.log_step_event(
+        run_id="run_gate2",
+        ts=datetime.now(timezone.utc).isoformat(),
+        level="info",
+        stage="collect",
+        domain="commodities",
+        event_type="tool_call",
+        label="web_extract [commodities]",
+        detail={"call_id": "plan_gate2:commodities:0", "tool": "web_extract"},
+    )
+    await store.log_step_event(
+        run_id="run_gate2",
+        ts=datetime.now(timezone.utc).isoformat(),
+        level="info",
+        stage="collect",
+        domain="",
+        event_type="progress",
+        label="Collecting intelligence from data sources…",
+        detail=None,
+    )
+    run = await store.get_run("run_gate2")
     assert run["status"] == "waiting_gate_2"
     assert run["gate_data"] == gate_data
     assert run["plans"] == [plan]
     assert run["sources"] == final["collection_manifest"]["commodities"]
     assert run["collection_plan"] is not None
     assert run["collection_plan"]["total"] == 1
+    assert run["collection_plan"]["succeeded"] == 1
+    assert run["collection_plan"]["pending"] == 0
 
 
 @pytest.mark.asyncio

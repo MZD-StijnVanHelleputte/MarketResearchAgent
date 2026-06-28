@@ -53,34 +53,43 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# Must match _NODE_MESSAGES["collect"] in api/routers/chat.py — logged once per
-# collect_node entry (including ReAct backtrack re-entries), marking where the
-# *current* collection pass begins.
-_COLLECT_ITERATION_START_LABEL = "Collecting intelligence from data sources…"
+def _planned_calls(plan: dict | None) -> list[dict]:
+    if not isinstance(plan, dict):
+        return []
+    calls = plan.get("planned_tool_calls") or plan.get("tool_calls") or []
+    return calls if isinstance(calls, list) else []
 
 
-def _scope_to_latest_collect(events: list[dict]) -> list[dict]:
-    """Drop events before the most recent collect_node entry, so ReAct backtrack
-    re-runs don't double-count (each re-entry re-logs domain_filter/tool_call)."""
-    boundary = 0
-    for e in events:
-        if (
-            e.get("event_type") == "progress"
-            and e.get("stage") == "collect"
-            and e.get("label") == _COLLECT_ITERATION_START_LABEL
-        ):
-            boundary = e.get("id", boundary)
-    return [e for e in events if e.get("id", 0) >= boundary]
+def _planned_call_ids(plan: dict | None) -> dict[str, dict]:
+    """Return the authoritative logical call IDs for a plan.
+
+    The domain agent enumerates calls after filtering by domain, so the stable ID is
+    f"{plan_id}:{domain}:{idx-within-that-domain}".
+    """
+    plan_id = (plan or {}).get("plan_id", "")
+    by_domain: dict[str, list[dict]] = {}
+    for call in _planned_calls(plan):
+        domain = call.get("domain") or "general_search"
+        by_domain.setdefault(domain, []).append(call)
+
+    out: dict[str, dict] = {}
+    for domain, calls in by_domain.items():
+        for idx, call in enumerate(calls):
+            out[f"{plan_id}:{domain}:{idx}"] = call
+    return out
 
 
-def _call_status_map(events: list[dict]) -> dict[str, tuple[str, str]]:
+def _call_status_map(
+    events: list[dict],
+    allowed_call_ids: set[str] | None = None,
+) -> dict[str, tuple[str, str]]:
     """Map each logical tool call_id to its final (status, reason) from step_events.
 
     status is "success" or "failed"; reason is the error string for failures (""
     otherwise). A "tool_call" event marks a call_id succeeded, "tool_failed_final"
-    marks it failed; transient mid-retry "tool_error" events are ignored. The first
-    write for a given call_id wins (the FRED-resolution path is the only case where
-    both could appear, and it never logs both for the same id).
+    marks it failed; transient mid-retry "tool_error" events are ignored. The latest
+    terminal write for a given call_id wins, so a no-data final failure can override
+    an earlier transport-level tool_call event for the same logical call.
     """
     status: dict[str, tuple[str, str]] = {}
     for e in events:
@@ -92,7 +101,9 @@ def _call_status_map(events: list[dict]) -> dict[str, tuple[str, str]]:
         except (json.JSONDecodeError, TypeError):
             detail = {}
         call_id = detail.get("call_id")
-        if not call_id or call_id in status:
+        if not call_id:
+            continue
+        if allowed_call_ids is not None and call_id not in allowed_call_ids:
             continue
         if event_type == "tool_call":
             status[call_id] = ("success", "")
@@ -101,30 +112,52 @@ def _call_status_map(events: list[dict]) -> dict[str, tuple[str, str]]:
     return status
 
 
-def _compute_collect_progress(events: list[dict], current_stage: str | None) -> dict:
+def _call_result_meta(
+    events: list[dict],
+    allowed_call_ids: set[str] | None = None,
+) -> dict[str, tuple[str, int]]:
+    """Map each succeeded tool call_id to the coarse (data_type, count) of what it
+    returned, read from the "tool_call" event detail (see core/tool_router). Used to
+    label each tool-call node in the collection-plan tree at Gate 2. Latest write
+    wins, matching _call_status_map."""
+    meta: dict[str, tuple[str, int]] = {}
+    for e in events:
+        if e.get("event_type") != "tool_call" or e.get("stage") != "collect":
+            continue
+        try:
+            detail = json.loads(e["detail"]) if e.get("detail") else {}
+        except (json.JSONDecodeError, TypeError):
+            detail = {}
+        call_id = detail.get("call_id")
+        if not call_id:
+            continue
+        if allowed_call_ids is not None and call_id not in allowed_call_ids:
+            continue
+        meta[call_id] = (detail.get("data_type") or "data", detail.get("count") or 0)
+    return meta
+
+
+def _compute_collect_progress(
+    events: list[dict],
+    current_stage: str | None,
+    plan: dict | None = None,
+) -> dict:
     """Derive live collection-progress fields from the run's step_events, so the
     frontend can show a determinate completion bar instead of a spinner.
 
-    tool_calls_total comes from each domain agent's one-time "domain_filter" event
-    (detail["matched"] = calls assigned to that domain). Completion is tracked per
-    logical call via detail["call_id"] (stable across all of a call's retry
-    attempts) — see _call_status_map. Transient "tool_error" events from mid-retry
-    attempts are not counted, so a call that fails twice then succeeds is still only
-    counted once — completed can never exceed total.
+    tool_calls_total comes from the approved plan, never from live execution
+    events. Completion is tracked per logical call via detail["call_id"] (stable
+    across all of a call's retry attempts) and filtered to that plan's call IDs.
+    Transient "tool_error" events from mid-retry attempts are not counted, so a
+    call that fails twice then succeeds is still only counted once.
     """
-    events = _scope_to_latest_collect(events)
-
-    total = 0
+    planned = _planned_call_ids(plan)
+    allowed_ids = set(planned)
+    total = len(planned)
     current_label: str | None = None
     current_domain: str | None = None
     for e in events:
         event_type = e.get("event_type")
-        if event_type == "domain_filter":
-            try:
-                detail = json.loads(e["detail"]) if e.get("detail") else {}
-            except (json.JSONDecodeError, TypeError):
-                detail = {}
-            total += detail.get("matched") or 0
         if (
             event_type == "progress"
             and e.get("stage") == "collect"
@@ -133,7 +166,7 @@ def _compute_collect_progress(events: list[dict], current_stage: str | None) -> 
             current_label = e.get("label")
             current_domain = e.get("domain") or None
 
-    call_status = _call_status_map(events)
+    call_status = _call_status_map(events, allowed_ids)
     completed = len(call_status)
     failed = sum(1 for st, _ in call_status.values() if st == "failed")
     succeeded = completed - failed
@@ -190,20 +223,27 @@ def build_collection_plan(plan: dict | None, events: list[dict]) -> dict | None:
     and labelled pending/succeeded/failed by matching its reconstructed call_id
     (f"{plan_id}:{domain}:{idx}", idx = position within the domain-filtered calls,
     exactly as base_domain_agent enumerates them) against the run's step_events.
-    Returns None when there is no plan with tool calls to show.
+    Succeeded calls also carry the coarse data_type/count of what they returned.
+
+    Renders during planning too: a preliminary plan that has leaves but no tool
+    calls yet shows the domain→leaf skeleton (every node pending), so the tree
+    visibly builds up across Understand before filling in during collection.
+    Returns None only when there is nothing (no calls and no leaves) to show.
     """
     if not isinstance(plan, dict):
         return None
-    calls = plan.get("planned_tool_calls") or []
-    if not calls:
+    calls = _planned_calls(plan)
+    leaves_all = plan.get("leaves") or []
+    if not calls and not leaves_all:
         return None
 
     from core.domains import display_name, ownership_order
     from tools.registry import tool_display_name
 
     plan_id = plan.get("plan_id", "")
-    leaves_all = plan.get("leaves") or []
-    status_map = _call_status_map(_scope_to_latest_collect(events))
+    allowed_ids = set(_planned_call_ids(plan))
+    status_map = _call_status_map(events, allowed_ids)
+    result_meta = _call_result_meta(events, allowed_ids)
 
     def _empty() -> dict:
         return {"total": 0, "succeeded": 0, "failed": 0, "pending": 0}
@@ -219,10 +259,14 @@ def build_collection_plan(plan: dict | None, events: list[dict]) -> dict | None:
         domain = call.get("domain") or "general_search"
         by_domain.setdefault(domain, []).append(call)
 
-    # Order domains by ownership priority, with any unknown domains trailing.
+    # Domains come from the planned calls *and* the plan's leaves, so the skeleton is
+    # visible during planning (leaves present, no calls yet). Order by ownership
+    # priority, with any unknown domains trailing.
+    leaf_domains = {lf.get("domain") for lf in leaves_all if lf.get("domain")}
     order = ownership_order()
     domain_keys = sorted(
-        by_domain, key=lambda d: order.index(d) if d in order else len(order)
+        set(by_domain) | leaf_domains,
+        key=lambda d: order.index(d) if d in order else len(order),
     )
 
     plan_counts = _empty()
@@ -242,8 +286,18 @@ def build_collection_plan(plan: dict | None, events: list[dict]) -> dict | None:
                 leaf_order.append(key)
             return leaf_nodes[key]
 
+        # Pre-create every planned leaf so it stays visible even before any tool call
+        # is attributed to it (and so a leaf shown during planning doesn't vanish once
+        # tool calls are assigned in the merged plan).
+        for lf in leaves_in_domain:
+            _leaf_node(
+                lf.get("key") or lf.get("label") or "?",
+                lf.get("label") or lf.get("key") or "?",
+                lf.get("leaf_type") or "",
+            )
+
         domain_counts = _empty()
-        for idx, call in enumerate(by_domain[domain]):
+        for idx, call in enumerate(by_domain.get(domain, [])):
             call_id = f"{plan_id}:{domain}:{idx}"
             st, reason = status_map.get(call_id, ("pending", ""))
             status = "succeeded" if st == "success" else st  # "success"→"succeeded"
@@ -257,12 +311,17 @@ def build_collection_plan(plan: dict | None, events: list[dict]) -> dict | None:
             else:
                 node = _leaf_node("__general__", "General", "")
             tool = call.get("tool", "")
-            node["tool_calls"].append({
+            tc = {
                 "tool": tool,
                 "display": tool_display_name(tool),
                 "status": status,
                 "reason": reason or None,
-            })
+            }
+            if status == "succeeded":
+                data_type, count = result_meta.get(call_id, ("data", 0))
+                tc["data_type"] = data_type
+                tc["count"] = count
+            node["tool_calls"].append(tc)
             _bump(node, status)
             _bump(domain_counts, status)
             _bump(plan_counts, status)
@@ -436,10 +495,10 @@ class SqliteStore:
         # truncating here would silently undercount tool_calls_total/completed below.
         events = await self.get_step_events(run_id, limit=1000)
         result["activity_log"] = [e["label"] for e in events if e["event_type"] == "progress"]
-        result.update(_compute_collect_progress(events, result.get("stage")))
         # Live stem→leaf collection plan with per-tool-call status, for the frontend
         # tree that replaces the flat sources panel during collection / at Gate 2.
         plan = (result.get("plans") or [None])[0]
+        result.update(_compute_collect_progress(events, result.get("stage"), plan))
         result["collection_plan"] = build_collection_plan(plan, events)
         return result
 

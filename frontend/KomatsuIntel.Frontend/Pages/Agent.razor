@@ -198,13 +198,15 @@
                   Style="border-top:1px solid #E5E7EB;">
             <MudStack Row="true" AlignItems="AlignItems.End" Spacing="2">
                 <MudTextField @bind-Value="_query"
-                              Placeholder="Ask a market intelligence question…"
+                              Placeholder="@(_requestingChanges
+                                  ? "Tell me what to change — a missing company, data type, region…"
+                                  : "Ask a market intelligence question…")"
                               Variant="Variant.Outlined"
                               Lines="2"
                               AutoGrow="true"
                               MaxLines="4"
                               Immediate="true"
-                              Disabled="@(_loading || _awaitingGate is not null || _awaitingTimeoutConfirm || _awaitingStallConfirm)"
+                              Disabled="@(_loading || _awaitingTimeoutConfirm || _awaitingStallConfirm || (_awaitingGate is not null && !_requestingChanges))"
                               Style="flex:1;"
                               Adornment="Adornment.None"
                               OnKeyDown="@HandleKeyDown" />
@@ -212,9 +214,9 @@
                            Color="Color.Primary"
                            EndIcon="@Icons.Material.Filled.Send"
                            OnClick="@Submit"
-                           Disabled="@(string.IsNullOrWhiteSpace(_query) || _loading || _awaitingGate is not null || _awaitingTimeoutConfirm || _awaitingStallConfirm)"
+                           Disabled="@(string.IsNullOrWhiteSpace(_query) || _loading || _awaitingTimeoutConfirm || _awaitingStallConfirm || (_awaitingGate is not null && !_requestingChanges))"
                            Style="min-width:100px;height:56px;">
-                    Run
+                    @(_requestingChanges ? "Send changes" : "Run")
                 </MudButton>
             </MudStack>
             @if (_runId is not null)
@@ -258,18 +260,42 @@
                 </MudStack>
             </MudPaper>
         }
-        else if (_awaitingGate == 1 && _consolidatedPlan is not null)
+        else if (_awaitingGate == 1 && _collectionPlan is not null)
         {
-            <PlanReview Data="@_consolidatedPlan"
-                        OnApprove="@ApproveGate1"
-                        OnRedirect="@RedirectGate1" />
+            @* Gate 1 — approve the collection plan that built up during planning, or
+               request changes (which unlocks the chat to capture missing context). *@
+            <CollectionPlan Plan="@_collectionPlan"
+                            Mode="gate1"
+                            OnApprove="@ApproveGate1"
+                            OnRequestChanges="@BeginRequestChanges" />
+        }
+        else if (_awaitingGate == 1)
+        {
+            @* Fallback: plan produced no leaves/tool calls to render, but the gate
+               must still be actionable. *@
+            <MudPaper Elevation="1" Class="pa-3">
+                <MudStack Spacing="2">
+                    <MudText Typo="Typo.subtitle2" Style="font-weight:700;">Collection Plan</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        The plan is ready for review.
+                    </MudText>
+                    <MudStack Row="true" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                                   OnClick="@ApproveGate1">Approve plan</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.Edit"
+                                   OnClick="@BeginRequestChanges">Request changes</MudButton>
+                    </MudStack>
+                </MudStack>
+            </MudPaper>
         }
         else if (_awaitingGate == 2 && _collectionPlan is not null)
         {
             @* Gate 2 reuses the completed collection-plan tree, with the accept /
                re-collect prompt pinned at the top. *@
             <CollectionPlan Plan="@_collectionPlan"
-                            ShowApprove="true"
+                            Mode="gate2"
                             OnApprove="@ApproveGate2"
                             OnRedirect="@(() => RedirectGate2(string.Empty))" />
         }
@@ -290,9 +316,9 @@
         }
         else if (_collectionPlan is not null && !_runComplete)
         {
-            @* Live collection plan during the collection phase (replaces the
-               flat sources list). *@
-            <CollectionPlan Plan="@_collectionPlan" />
+            @* Live collection plan during the understand + collection phases
+               (replaces the flat sources list). *@
+            <CollectionPlan Plan="@_collectionPlan" Mode="live" />
         }
         else
         {
@@ -512,10 +538,13 @@
     private bool _episodicSaving;
     private bool _episodicSaved;
 
-    private ConsolidatedPlanData?  _consolidatedPlan;
     private GatheredDataView? _gatheredData;
     private CollectionPlanView?    _collectionPlan;
     private BriefReviewData?       _briefReview;
+
+    // Gate-1 "request changes": unlocks the chat so the next message is sent as
+    // replan guidance instead of starting a brand-new run.
+    private bool _requestingChanges;
 
     private readonly List<ChatMessage> _messages         = new();
     private readonly List<SourceItem>  _sources          = new();
@@ -755,6 +784,14 @@
     {
         if (string.IsNullOrWhiteSpace(_query)) return;
 
+        // At Gate 1 with "request changes" active, the message is replan guidance,
+        // not a new run — send it as Gate-1 feedback and resume the same run.
+        if (_requestingChanges)
+        {
+            await SubmitGate1Changes();
+            return;
+        }
+
         _pollCts?.Cancel();
         _pollCts = new CancellationTokenSource();
 
@@ -768,7 +805,7 @@
         _awaitingGate           = null;
         _awaitingTimeoutConfirm = false;
         _awaitingStallConfirm   = false;
-        _consolidatedPlan       = null;
+        _requestingChanges      = false;
         _currentStage           = 0;
         _seenActivityCount  = 0;
         _toolCallsTotal      = null;
@@ -969,14 +1006,9 @@
                 int gate        = int.Parse(run.Status[^1..]);
                 _awaitingGate   = gate;
 
-                if (run.GateData.HasValue && gate == 1)
-                {
-                    var plan = run.GateData.Value.GetProperty("plan")
-                                    .Deserialize<ConsolidatedPlan>(_json);
-                    if (plan is not null)
-                        _consolidatedPlan = new ConsolidatedPlanData(_runId!, plan);
-                }
-                else if (run.GateData.HasValue && gate == 2)
+                // Gate 1 renders directly from run.CollectionPlan (the built-up tree);
+                // no extra gate payload to deserialize here.
+                if (run.GateData.HasValue && gate == 2)
                 {
                     var domains = run.GateData.Value.GetProperty("domains")
                                       .Deserialize<List<DomainData>>(_json);
@@ -1077,25 +1109,42 @@
     private async Task ApproveGate1()
     {
         await Api.ApproveGateAsync(_runId!, 1, new { });
-        _awaitingGate     = null;
-        _consolidatedPlan = null;
-        _agentTyping      = true;
-        _loading          = true;
-        _currentThought   = null;
-        _statusMessage    = "Gate 1 approved — collecting data…";
+        _awaitingGate      = null;
+        _requestingChanges = false;
+        _agentTyping       = true;
+        _loading           = true;
+        _currentThought    = null;
+        _statusMessage     = "Gate 1 approved — collecting data…";
         StateHasChanged();
         await PollUntilComplete(_pollCts!.Token);
     }
 
-    private async Task RedirectGate1()
+    // Gate 1 "request changes": open the chat for the user to describe what's missing.
+    private async Task BeginRequestChanges()
     {
-        await Api.RedirectGateAsync(_runId!, 1, new { });
-        _awaitingGate     = null;
-        _consolidatedPlan = null;
-        _agentTyping      = true;
-        _loading          = true;
-        _currentThought   = null;
-        _statusMessage    = "Replanning…";
+        _requestingChanges = true;
+        AddMessage("system",
+            "What should I change? Add any missing companies, data types, regions or "
+            + "angles below, then send — I'll revise the plan.");
+        await ScrollToBottom();
+        StateHasChanged();
+    }
+
+    // The typed guidance is sent as Gate-1 feedback; the backend folds it into the replan.
+    private async Task SubmitGate1Changes()
+    {
+        var feedback = _query.Trim();
+        _query             = string.Empty;
+        _requestingChanges = false;
+        AddMessage("user", feedback);
+        await ScrollToBottom();
+
+        await Api.RedirectGateAsync(_runId!, 1, new { feedback });
+        _awaitingGate   = null;
+        _agentTyping    = true;
+        _loading        = true;
+        _currentThought = null;
+        _statusMessage  = "Replanning with your guidance…";
         StateHasChanged();
         await PollUntilComplete(_pollCts!.Token);
     }

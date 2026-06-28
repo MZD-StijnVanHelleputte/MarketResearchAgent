@@ -49,7 +49,7 @@ from core.tot.proposer import PlanProposer
 from core.tot.scorer import score_and_prune
 from core.tot.schemas import ResearchContext
 from core.research_agent import ResearchAgent
-from core.plan_merger import PlanMerger
+from core.plan_merger import PlanMerger, build_entity_manifest, build_preliminary_leaves
 from agents.grounding_agent import GroundingAgent
 from state_bus.server import clear_plans, write_plan_direct, get_all_plans_direct
 from memory.context_window import ContextWindow
@@ -131,6 +131,9 @@ class AgentState(TypedDict):
     # short-circuit to the partial-brief path instead of doing more work, so a stalled
     # run can be pushed to a report + the next gate instead of hanging forever.
     force_finalize: bool
+    # Free-text guidance the user typed when rejecting the Gate-1 plan ("you forgot
+    # Liebherr / add tariff data"); folded into the next planning pass, then cleared.
+    redirect_feedback: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +396,13 @@ async def understand_node(state: AgentState) -> dict:
 
     query = state["user_query"]
 
+    # Fold any Gate-1 rejection feedback ("you forgot Liebherr / add tariff data")
+    # into the planning input for this pass, so the replan actually covers it.
+    feedback = (state.get("redirect_feedback") or "").strip()
+    if feedback:
+        query = f"{query}\n\nAdditional user guidance: {feedback}"
+        await log_event("progress", "Replanning with your additional guidance…")
+
     # --- Phase 9.3: Entity clarification gate (optional, off by default) ---
     if settings.gates.gate_clarification_enabled and not state.get("clarification_done"):
         store = SqliteStore()
@@ -443,6 +453,28 @@ async def understand_node(state: AgentState) -> dict:
             )
         except Exception as exc:
             logger.warning("understand_node: ResearchAgent failed (%s) — proceeding without research", exc)
+
+    # Stream the plan skeleton to the UI the moment research resolves entities:
+    # persist a preliminary plan (domains + leaves, no tool calls yet) so the
+    # collection-plan tree builds up during Understand instead of materialising all
+    # at once at Gate 1. The full consolidated plan (with tool calls) overwrites this
+    # after the merge below. Best-effort — never block planning on it.
+    try:
+        prelim_leaves = build_preliminary_leaves(research_context)
+        if prelim_leaves:
+            prelim_plan = {
+                "plan_id": f"consolidated-{state['run_id']}",
+                "domains_active": sorted({lf.domain for lf in prelim_leaves}),
+                "entity_manifest": build_entity_manifest(research_context),
+                "leaves": [lf.model_dump() for lf in prelim_leaves],
+                "planned_tool_calls": [],
+            }
+            await SqliteStore().upsert_run(
+                state["run_id"], state.get("session_id", ""), state["user_query"],
+                status="running", stage="understand", plans=[prelim_plan],
+            )
+    except Exception as exc:
+        logger.debug("understand_node: preliminary plan persist failed (non-fatal): %s", exc)
 
     # 3. Propose 7 depth-1 plans (enriched with research_context)
     await log_event("progress", "Drafting candidate research plans…")
@@ -570,6 +602,8 @@ async def understand_node(state: AgentState) -> dict:
         "plans": [consolidated.model_dump()],
         "stage": "understand" if gate1_needed else "collect",
         "context_messages": cw.to_state(),
+        # Consumed above; clear it so it can't bleed into a later replan.
+        "redirect_feedback": None,
         **usage_delta,
     }
 
