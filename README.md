@@ -27,9 +27,9 @@ flowchart LR
     C -- Gate 2: approve data --> S[Synthesize<br/>hierarchical chapters]
     S -- Gate 3: approve brief --> R([Intelligence brief / PDF])
 
-    C -. confidence &lt; 0.75 .-> C
-    U -. redirect / replan .-> U
-    C -. timeout · stall · budget .-> P[Partial brief]
+    C -. "confidence < 0.75" .-> C
+    U -. "redirect / replan" .-> U
+    C -. "timeout · stall · budget" .-> P[Partial brief]
     S -. redirect .-> S
 ```
 
