@@ -182,19 +182,19 @@ Both tiers must be running for the system to work — start the backend first, t
 
 Configuration is driven by environment variables loaded through [`backend/config/settings.py`](backend/config/settings.py) (pydantic-settings, `__`-nested keys). Copy [`backend/.env.example`](backend/.env.example) to `backend/.env` and fill in:
 
-| Variable | Purpose |
-| --- | --- |
-| `LLM__PROVIDER`, `LLM__MODEL` | LLM provider (`mistral`) and model override (defaults to `mistral-medium-latest`) |
-| `MISTRAL_API_KEY` | Mistral API key (reasoning + synthesis) |
-| `ALPHA_VANTAGE_API_KEY` | Stock screener / technical data |
-| `FMP_API_KEY` | Financial Modeling Prep — company financials |
-| `NEWSAPI_API_KEY` | News search |
-| `SEC_EDGAR_API_KEY` | SEC EDGAR filings & press releases |
-| `TAVILY_API_KEY` | Web search / research / extraction |
-| `FRED_API_KEY` | Federal Reserve macro & commodity series |
-| `STORES__SQLITE_PATH`, `STORES__CHROMA_PATH` | Override the on-disk store locations |
-| `SAFETY__AUTO_APPROVE_GATES` | *Dev only* — skip the human gates |
-| `SAFETY__ALLOW_NETWORK_WRITES` | *Dev only* — relax the network-write guard |
+| Variable | Purpose | Provider / get a key |
+| --- | --- | --- |
+| `LLM__PROVIDER`, `LLM__MODEL` | LLM provider (`mistral`) and model override (defaults to `mistral-medium-latest`) | [Mistral AI](https://mistral.ai/) |
+| `MISTRAL_API_KEY` | Mistral API key (reasoning + synthesis) | [console.mistral.ai](https://console.mistral.ai/api-keys/) |
+| `ALPHA_VANTAGE_API_KEY` | Stock screener / technical data | [Alpha Vantage](https://www.alphavantage.co/support/#api-key) |
+| `FMP_API_KEY` | Financial Modeling Prep — company financials | [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs) |
+| `NEWSAPI_API_KEY` | News search | [NewsAPI](https://newsapi.org/register) |
+| `SEC_EDGAR_API_KEY` | SEC EDGAR filings & press releases | [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces) |
+| `TAVILY_API_KEY` | Web search / research / extraction | [Tavily](https://app.tavily.com/) |
+| `FRED_API_KEY` | Federal Reserve macro & commodity series | [FRED API keys](https://fredaccount.stlouisfed.org/apikeys) |
+| `STORES__SQLITE_PATH`, `STORES__CHROMA_PATH` | Override the on-disk store locations | — |
+| `SAFETY__AUTO_APPROVE_GATES` | *Dev only* — skip the human gates | — |
+| `SAFETY__ALLOW_NETWORK_WRITES` | *Dev only* — relax the network-write guard | — |
 
 Everything else — ToT branching factor, gate toggles, timeouts, spend/budget caps, retrieval parameters — is tunable in `config/settings.py`, which is the single source of truth.
 
