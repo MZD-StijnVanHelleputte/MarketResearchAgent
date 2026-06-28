@@ -97,10 +97,10 @@
     [Parameter] public EventCallback OnRedirect { get; set; }
 
     // Compact gray/green/red count widget, reused at plan, domain and leaf level.
-    private RenderFragment StatusCounts(int pending, int succeeded, int failed) =>@<span class="cp-counts">
-        <span class="cp-count"><span class="cp-dot cp-dot-pending"></span>@pending</span>
-        <span class="cp-count"><span class="cp-dot cp-dot-success"></span>@succeeded</span>
-        <span class="cp-count"><span class="cp-dot cp-dot-failed"></span>@failed</span>
+    private RenderFragment StatusCounts(int pending, int succeeded, int failed) =>@<span class="cp-counts" aria-label="Collection progress">
+        <span class="cp-count cp-count-pending" title="To do"><span class="cp-dot cp-dot-pending"></span>@pending</span>
+        <span class="cp-count cp-count-success" title="Successful tool calls"><span class="cp-dot cp-dot-success"></span>@succeeded</span>
+        <span class="cp-count cp-count-failed" title="Failed tool calls"><span class="cp-dot cp-dot-failed"></span>@failed</span>
     </span>;
 
     private static string DotClass(string status) => status switch

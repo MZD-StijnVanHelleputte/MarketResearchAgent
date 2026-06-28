@@ -508,10 +508,31 @@ html, body {
 .cp-count {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    justify-content: center;
+    gap: 4px;
+    min-width: 34px;
+    height: 22px;
+    padding: 0 7px;
+    border-radius: 999px;
+    border: 1px solid transparent;
     font-size: 0.72rem;
-    font-weight: 600;
-    color: #6B7280;
+    font-weight: 700;
+    line-height: 1;
+}
+.cp-count-pending {
+    color: #4B5563;
+    background: #F3F4F6;
+    border-color: #E5E7EB;
+}
+.cp-count-success {
+    color: #166534;
+    background: #DCFCE7;
+    border-color: #BBF7D0;
+}
+.cp-count-failed {
+    color: #991B1B;
+    background: #FEE2E2;
+    border-color: #FECACA;
 }
 .cp-dot {
     display: inline-block;
