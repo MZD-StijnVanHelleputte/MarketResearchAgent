@@ -97,11 +97,47 @@
     [Parameter] public EventCallback OnRedirect { get; set; }
 
     // Compact gray/green/red count widget, reused at plan, domain and leaf level.
-    private RenderFragment StatusCounts(int pending, int succeeded, int failed) =>@<span class="cp-counts" aria-label="Collection progress">
-        <span class="cp-count cp-count-pending" title="To do"><span class="cp-dot cp-dot-pending"></span>@pending</span>
-        <span class="cp-count cp-count-success" title="Successful tool calls"><span class="cp-dot cp-dot-success"></span>@succeeded</span>
-        <span class="cp-count cp-count-failed" title="Failed tool calls"><span class="cp-dot cp-dot-failed"></span>@failed</span>
+    // Styles are inline so progress numbers stay readable even if app.css is stale.
+    private RenderFragment StatusCounts(int pending, int succeeded, int failed) =>@<span class="cp-counts"
+        aria-label="Collection progress"
+        style="display:inline-flex;align-items:center;gap:8px;flex-shrink:0;">
+        <span class="cp-count cp-count-pending" title="To do" style="@PendingCountStyle">
+            <span class="cp-dot cp-dot-pending" style="@PendingDotStyle"></span>@pending
+        </span>
+        <span class="cp-count cp-count-success" title="Successful tool calls" style="@SuccessCountStyle">
+            <span class="cp-dot cp-dot-success" style="@SuccessDotStyle"></span>@succeeded
+        </span>
+        <span class="cp-count cp-count-failed" title="Failed tool calls" style="@FailedCountStyle">
+            <span class="cp-dot cp-dot-failed" style="@FailedDotStyle"></span>@failed
+        </span>
     </span>;
+
+    private const string PendingCountStyle =
+        "display:inline-flex;align-items:center;justify-content:center;gap:4px;" +
+        "min-width:38px;height:24px;padding:0 8px;border-radius:999px;" +
+        "border:1px solid #E5E7EB;background:#F3F4F6;color:#4B5563;" +
+        "font-size:0.72rem;font-weight:800;line-height:1;";
+
+    private const string SuccessCountStyle =
+        "display:inline-flex;align-items:center;justify-content:center;gap:4px;" +
+        "min-width:38px;height:24px;padding:0 8px;border-radius:999px;" +
+        "border:1px solid #BBF7D0;background:#DCFCE7;color:#166534;" +
+        "font-size:0.72rem;font-weight:800;line-height:1;";
+
+    private const string FailedCountStyle =
+        "display:inline-flex;align-items:center;justify-content:center;gap:4px;" +
+        "min-width:38px;height:24px;padding:0 8px;border-radius:999px;" +
+        "border:1px solid #FECACA;background:#FEE2E2;color:#991B1B;" +
+        "font-size:0.72rem;font-weight:800;line-height:1;";
+
+    private const string PendingDotStyle =
+        "display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#9CA3AF;";
+
+    private const string SuccessDotStyle =
+        "display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#22C55E;";
+
+    private const string FailedDotStyle =
+        "display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#EF4444;";
 
     private static string DotClass(string status) => status switch
     {
