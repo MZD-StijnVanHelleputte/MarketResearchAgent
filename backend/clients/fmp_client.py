@@ -16,6 +16,7 @@ class FmpClient(BaseHttpClient):
             timeout_s=settings.fmp_timeout_s,
             max_retries=settings.fmp_max_retries,
             rate_limit_per_min=settings.fmp_rate_limit_per_min,
+            backoff_cap_s=settings.fmp_backoff_cap_s,
         )
         self._api_key = settings.fmp_api_key
 

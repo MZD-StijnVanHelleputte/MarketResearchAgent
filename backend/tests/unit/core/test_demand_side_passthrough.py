@@ -30,8 +30,8 @@ def test_proposer_prompt_surfaces_demand_side_companies():
     system = messages[0]["content"]
     assert "BYD (1211.HK)" in user
     assert "Volkswagen (VOW3.DE)" in user
-    # The system prompt must route consumers to macro_geopolitics, not competition/customers.
-    assert "macro_geopolitics" in system
+    # The system prompt must route demand-side consumers to general_search.
+    assert "general_search" in system
     assert "Demand-side" in system or "demand-side" in system
 
 

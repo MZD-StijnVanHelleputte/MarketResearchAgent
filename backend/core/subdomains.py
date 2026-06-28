@@ -11,11 +11,11 @@ Design notes:
   - Entities come from the plan's entity_manifest (explicitly researched) and the
     version-controlled master data, filtered to those actually present in the
     collected evidence so we never emit empty sub-sections.
-  - macro_geopolitics and general_search have no fixed master-data entity list,
-    so their "entities" are themes extracted from this run's actual evidence via
-    one LLM call (see `_theme_candidates`). Domains that fail to yield >=2 themes
-    (or any other unlisted domain) return [] so the caller falls back to the
-    legacy single-chapter synthesis path.
+  - general_search has no fixed master-data entity list, so its "entities" are
+    themes extracted from this run's actual evidence via one LLM call (see
+    `_theme_candidates`). Domains that fail to yield >=2 entities/themes (or any
+    other unlisted domain) return [] so the caller falls back to the legacy
+    single-chapter synthesis path.
 """
 from __future__ import annotations
 
@@ -23,9 +23,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from itertools import zip_longest
 
 from config import settings
+from core.domains import masterdata_source, ownership_order
 from core.schemas import MergedChapter
 from models.llm_client import LLMClient
 from models.usage import llm_usage
@@ -33,7 +33,9 @@ from prompts.synthesize_prompt import THEME_EXTRACTION_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
-_THEMATIC_DOMAINS = {"macro_geopolitics", "general_search"}
+# Domains with no fixed master-data entity list, decomposed into LLM-derived
+# themes instead of named entities (see _theme_candidates).
+_THEMATIC_DOMAINS = {"general_search"}
 
 
 @dataclass
@@ -184,6 +186,54 @@ def assemble_entity_evidence(
     return evidence
 
 
+def classify_entity_domain(
+    dataset: dict,
+    masterdata,
+    demand_side_companies: list[str] | None = None,
+    manifest: dict | None = None,
+) -> tuple[str | None, str]:
+    """Return (true_domain, segment) for *dataset* by checking it against every
+    master-data-backed domain in ownership-priority order; the first alias hit wins.
+
+    Used to catch datasets that were collected by one domain's agent (e.g. a broad
+    web search) but are actually about an entity that belongs to a different domain
+    (e.g. a competitor surfaced while collecting mining-operator data). Returns
+    (None, "") when nothing matches, so callers keep the dataset's original domain.
+    The segment element is retained for call-site compatibility and is always "".
+    """
+    manifest = manifest or {}
+
+    # Try the canonical master-data resolution first (same mechanism plan_merger
+    # uses at plan-build time), using the ticker/symbol embedded in the dataset's
+    # series_id ("tool:TICKER[:period]") or label. Without this, a company that
+    # resolve_entity correctly maps to e.g. "mining_operators" could still get
+    # reclassified into "competition" by the candidate-alias scan below, since
+    # that scan trusts free-text manifest lists and competition has a higher
+    # ownership priority than most customer domains.
+    if masterdata is not None:
+        for ident in _dataset_identifiers(dataset):
+            res = masterdata.resolve_entity(ident)
+            if res is not None:
+                return res.domain, ""
+
+    for domain in ownership_order():
+        if not masterdata_source(domain):
+            continue  # research-derived domains aren't reclassification targets
+        builder = _CANDIDATE_BUILDERS.get(domain)
+        if builder is None:
+            continue
+        candidates = builder(manifest, masterdata)
+        if any(_dataset_mentions(dataset, c.aliases) for c in candidates):
+            return domain, ""
+
+    if demand_side_companies:
+        aliases = {str(c).strip() for c in demand_side_companies if str(c).strip()}
+        if _dataset_mentions(dataset, aliases):
+            return "general_search", ""
+
+    return None, ""
+
+
 def group_datasets_by_entity(
     domain: str,
     datasets: list[dict],
@@ -266,23 +316,37 @@ def _competition_candidates(manifest: dict, masterdata) -> list[Subdomain]:
 
     # Researched competitors not in master data (e.g. a newly surfaced rival) —
     # use the researched name as the label so we don't fall back to a bare ticker.
+    # Guard against the manifest's free-text "competitors"/"tickers" lists pulling
+    # in entities that are actually canonically owned by another domain (e.g. a
+    # mining operator like BHP, which resolve_entity correctly maps to
+    # "mining_operators" via data/operators/operators.json) — without this check,
+    # competition's higher ownership priority would steal their datasets at
+    # classify_entity_domain() time.
     seen_names = {c.get("name", "") for c in competitors}
     for c in manifest.get("competitors", []) or []:
         label = str(c).strip()
-        if label and label not in seen_names:
-            cands.append(Subdomain(
-                key=label, label=label, aliases={label},
-                query_hint=f"{label} competitor strategy",
-            ))
+        if not label or label in seen_names:
+            continue
+        res = masterdata.resolve_entity(label) if masterdata is not None else None
+        if res is not None and res.domain != "competition":
+            continue
+        cands.append(Subdomain(
+            key=label, label=label, aliases={label},
+            query_hint=f"{label} competitor strategy",
+        ))
 
     # Any planned ticker not in master data and not already covered above by name.
     for t in manifest.get("tickers", []) or []:
         tu = str(t).strip().upper()
-        if tu and tu not in by_ticker:
-            cands.append(Subdomain(
-                key=tu, label=tu, aliases={tu},
-                query_hint=f"{tu} competitor",
-            ))
+        if not tu or tu in by_ticker:
+            continue
+        res = masterdata.resolve_entity(tu) if masterdata is not None else None
+        if res is not None and res.domain != "competition":
+            continue
+        cands.append(Subdomain(
+            key=tu, label=tu, aliases={tu},
+            query_hint=f"{tu} competitor",
+        ))
     return cands
 
 
@@ -326,11 +390,12 @@ def _distributors_candidates(manifest: dict, masterdata) -> list[Subdomain]:
     return cands
 
 
-def _customer_segment_candidates(
-    entries: list[dict], segment: str, seen: set[str]
+def _company_candidates(
+    entries: list[dict], manifest_key: str, manifest: dict, query_suffix: str
 ) -> list[Subdomain]:
-    """Build Subdomain candidates for one customer segment (mining/construction/others)
-    from a master-data entry list, tagging each with its segment."""
+    """Build company Subdomain candidates from a master-data list plus any
+    research-surfaced names in manifest[manifest_key]."""
+    seen: set[str] = set()
     cands: list[Subdomain] = []
     for entry in entries:
         name = entry.get("name", "")
@@ -341,38 +406,47 @@ def _customer_segment_candidates(
                 key=ticker.upper() or name,
                 label=name,
                 aliases={name, ticker},
-                query_hint=f"{name} ({segment}) capex equipment spend",
-                segment=segment,
+                query_hint=f"{name} {query_suffix}",
+            ))
+    for c in manifest.get(manifest_key, []) or []:
+        label = str(c).strip()
+        if label and label not in seen:
+            seen.add(label)
+            cands.append(Subdomain(
+                key=label, label=label, aliases={label},
+                query_hint=f"{label} {query_suffix}",
             ))
     return cands
 
 
-def _customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
-    # Komatsu's customer base spans three segments: mining operators (existing
-    # primary customer base), construction & infrastructure contractors, and
-    # niche industrial buyers (recyclers, steelmakers, pulp/paper producers).
-    seen: set[str] = set()
-    mining = _customer_segment_candidates(masterdata.get_operators(), "Mining", seen)
-    construction = _customer_segment_candidates(masterdata.get_construction(), "Construction", seen)
-    others = _customer_segment_candidates(masterdata.get_others(), "Others", seen)
+def _mining_operators_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    return _company_candidates(
+        masterdata.get_operators(), "operators", manifest, "capex equipment spend"
+    )
 
-    # Plus any researched mining operators from the manifest (kept as "Mining" —
-    # construction/others entity discovery from manifest is not yet supported).
-    for c in manifest.get("operators", []) or []:
-        label = str(c).strip()
-        if label and label not in seen:
-            seen.add(label)
-            mining.append(Subdomain(
-                key=label, label=label, aliases={label},
-                query_hint=f"{label} (Mining) capital expenditure",
-                segment="Mining",
-            ))
 
-    # Interleave segments round-robin so the generic cap in enumerate_subdomains
-    # (max_subdomains_per_domain) doesn't let one segment crowd out the others.
+def _construction_companies_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    return _company_candidates(
+        masterdata.get_construction(), "construction", manifest, "project pipeline capex"
+    )
+
+
+def _specialized_customers_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    return _company_candidates(
+        masterdata.get_others(), "others", manifest, "capital plan equipment"
+    )
+
+
+def _macroeconomics_candidates(manifest: dict, masterdata) -> list[Subdomain]:
+    # Countries/regions are surfaced by research (manifest), not master data.
     cands: list[Subdomain] = []
-    for group in zip_longest(mining, construction, others):
-        cands.extend(c for c in group if c is not None)
+    for region in manifest.get("regions", []) or []:
+        label = str(region).strip()
+        if label:
+            cands.append(Subdomain(
+                key=label.lower(), label=label, aliases={label},
+                query_hint=f"{label} macroeconomic outlook GDP construction",
+            ))
     return cands
 
 
@@ -467,11 +541,14 @@ def _slugify(label: str) -> str:
 
 
 _CANDIDATE_BUILDERS = {
-    "competition": _competition_candidates,
     "commodities": _commodities_candidates,
+    "competition": _competition_candidates,
+    "mining_operators": _mining_operators_candidates,
+    "construction_companies": _construction_companies_candidates,
+    "specialized_customers": _specialized_customers_candidates,
     "distributors": _distributors_candidates,
-    "customers": _customers_candidates,
     "mining_projects": _mining_projects_candidates,
+    "macroeconomics": _macroeconomics_candidates,
 }
 
 
@@ -498,6 +575,24 @@ def _dataset_mentions(dataset: dict, aliases: set[str]) -> bool:
     except Exception:
         blob = str(dataset).lower()
     return _mentions(blob, aliases)
+
+
+def _dataset_identifiers(dataset: dict) -> list[str]:
+    """Candidate ticker/symbol/name strings for *dataset*, for master-data lookup.
+
+    series_id is "tool:TICKER[:period]" (see agents/base_domain_agent.py), the
+    most reliable identifier; label is "TICKER period" or a bare symbol/name as
+    a fallback when series_id is absent.
+    """
+    idents: list[str] = []
+    series_id = str(dataset.get("series_id") or "")
+    parts = series_id.split(":")
+    if len(parts) >= 2 and parts[1]:
+        idents.append(parts[1])
+    label = str(dataset.get("label") or "").strip()
+    if label:
+        idents.append(label.split()[0])
+    return idents
 
 
 def _mentions(text: str, aliases: set[str]) -> bool:

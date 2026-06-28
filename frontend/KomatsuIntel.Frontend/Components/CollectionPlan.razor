@@ -1,0 +1,112 @@
+@* Live collection plan: Collection Plan → Domain → Leaf → tool calls, with
+   gray/green/red status counts rolling up at every level. Replaces the flat
+   sources panel during collection; reused (completed) at Gate 2. *@
+
+<MudPaper Elevation="1" Class="pa-3">
+    <MudStack Spacing="2">
+
+        @* Gate-2 accept bar — pinned at the top so the user needn't scroll. *@
+        @if (ShowApprove)
+        {
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.CheckCircle"
+                           OnClick="@(() => OnApprove.InvokeAsync())">
+                    Approve &amp; Synthesize
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.Replay"
+                           OnClick="@(() => OnRedirect.InvokeAsync())">
+                    Re-collect
+                </MudButton>
+            </MudStack>
+            <MudDivider />
+        }
+
+        @* Top layer — the whole collection plan. *@
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="width:100%;">
+            <MudText Typo="Typo.subtitle2" Style="font-weight:700;">Collection Plan</MudText>
+            @StatusCounts(Plan.Pending, Plan.Succeeded, Plan.Failed)
+        </MudStack>
+
+        @if (Plan.Domains.Count == 0)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary"
+                     Style="display:block;text-align:center;padding:24px 0;">
+                The collection plan will appear here once research planning completes.
+            </MudText>
+        }
+
+        <MudExpansionPanels MultiExpansion="true" Elevation="0">
+            @foreach (var domain in Plan.Domains)
+            {
+                <MudExpansionPanel Style="border:1px solid #E5E7EB;border-radius:8px;margin-bottom:8px;">
+                    <TitleContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="width:100%;">
+                            <MudText Typo="Typo.body2" Style="font-weight:700;">@domain.Display</MudText>
+                            @StatusCounts(domain.Pending, domain.Succeeded, domain.Failed)
+                        </MudStack>
+                    </TitleContent>
+                    <ChildContent>
+                        <MudExpansionPanels MultiExpansion="true" Elevation="0">
+                            @foreach (var leaf in domain.Leaves)
+                            {
+                                <MudExpansionPanel Style="background:#F8F9FC;border-radius:6px;margin-bottom:6px;">
+                                    <TitleContent>
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="width:100%;">
+                                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                                <MudText Typo="Typo.body2" Style="font-weight:600;">@leaf.Label</MudText>
+                                                @if (!string.IsNullOrWhiteSpace(leaf.LeafType))
+                                                {
+                                                    <span class="cp-leaf-type">@leaf.LeafType.Replace('_', ' ')</span>
+                                                }
+                                            </MudStack>
+                                            @StatusCounts(leaf.Pending, leaf.Succeeded, leaf.Failed)
+                                        </MudStack>
+                                    </TitleContent>
+                                    <ChildContent>
+                                        @foreach (var call in leaf.ToolCalls)
+                                        {
+                                            <div class="cp-toolcall">
+                                                <span class="cp-dot @DotClass(call.Status)"></span>
+                                                <div style="flex:1;min-width:0;">
+                                                    <div class="cp-toolcall-name">@call.Display</div>
+                                                    @if (call.Status == "failed" && !string.IsNullOrWhiteSpace(call.Reason))
+                                                    {
+                                                        <div class="cp-toolcall-reason">@call.Reason</div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </ChildContent>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
+
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public CollectionPlanView Plan { get; set; } = default!;
+    [Parameter] public bool ShowApprove { get; set; }
+    [Parameter] public EventCallback OnApprove { get; set; }
+    [Parameter] public EventCallback OnRedirect { get; set; }
+
+    // Compact gray/green/red count widget, reused at plan, domain and leaf level.
+    private RenderFragment StatusCounts(int pending, int succeeded, int failed) =>@<span class="cp-counts">
+        <span class="cp-count"><span class="cp-dot cp-dot-pending"></span>@pending</span>
+        <span class="cp-count"><span class="cp-dot cp-dot-success"></span>@succeeded</span>
+        <span class="cp-count"><span class="cp-dot cp-dot-failed"></span>@failed</span>
+    </span>;
+
+    private static string DotClass(string status) => status switch
+    {
+        "succeeded" => "cp-dot-success",
+        "failed"    => "cp-dot-failed",
+        _           => "cp-dot-pending",
+    };
+}

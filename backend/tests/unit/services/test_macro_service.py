@@ -81,3 +81,28 @@ async def test_client_error_wrapped_as_service_error():
 
     with pytest.raises(ServiceError, match="FRED request failed"):
         await service.get_indicator("FEDFUNDS")
+
+
+@pytest.mark.asyncio
+async def test_all_missing_observations_raise_service_error():
+    """A window where every value is FRED's '.' sentinel is not a successful fetch."""
+    all_missing = {"observations": [
+        {"date": "2026-04-01", "value": "."},
+        {"date": "2026-03-01", "value": "."},
+    ]}
+    service = MacroService(client=_mock_client(obs=all_missing))
+
+    with pytest.raises(ServiceError, match="no usable observations"):
+        await service.get_indicator("FEDFUNDS")
+
+
+@pytest.mark.asyncio
+async def test_series_id_normalised_to_uppercase():
+    """Mixed-case guesses are upcased before the FRED call (FRED maps lowercase to an
+    all-missing series instead of erroring)."""
+    client = _mock_client()
+    service = MacroService(client=client)
+    result = await service.get_indicator("fedfunds", limit=3)
+
+    assert result.series_id == "FEDFUNDS"
+    client.get_observations.assert_awaited_once_with("FEDFUNDS", 3)

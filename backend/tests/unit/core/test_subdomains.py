@@ -6,10 +6,41 @@ from core.guardrails import Guardrails
 from core.schemas import MergedChapter
 from core.subdomains import (
     assemble_entity_evidence,
+    classify_entity_domain,
     enumerate_subdomains,
     group_datasets_by_entity,
 )
 import core.subdomains as subdomains_module
+from services.masterdata_service import EntityResolution
+
+# label -> (canonical_label, domain, leaf_type) for the mock's resolve_entity,
+# keyed by every name/ticker that should resolve via master data below.
+_RESOLUTIONS: dict[str, tuple[str, str, str]] = {
+    "caterpillar": ("Caterpillar", "competition", "company"),
+    "cat": ("Caterpillar", "competition", "company"),
+    "sandvik": ("Sandvik", "competition", "company"),
+    "sand.st": ("Sandvik", "competition", "company"),
+    "deere & company (john deere)": ("Deere & Company (John Deere)", "competition", "company"),
+    "de": ("Deere & Company (John Deere)", "competition", "company"),
+    "bhp": ("BHP", "mining_operators", "company"),
+    "freeport-mcmoran": ("Freeport-McMoRan", "mining_operators", "company"),
+    "fcx": ("Freeport-McMoRan", "mining_operators", "company"),
+    "deme group": ("DEME Group", "construction_companies", "company"),
+    "vinci sa": ("Vinci SA", "construction_companies", "company"),
+    "dg.pa": ("Vinci SA", "construction_companies", "company"),
+    "umicore": ("Umicore", "specialized_customers", "company"),
+    "umi.br": ("Umicore", "specialized_customers", "company"),
+    "arcelormittal": ("ArcelorMittal", "specialized_customers", "company"),
+    "mt": ("ArcelorMittal", "specialized_customers", "company"),
+}
+
+
+def _resolve_entity(name_or_ticker: str) -> EntityResolution | None:
+    hit = _RESOLUTIONS.get(str(name_or_ticker).strip().lower())
+    if hit is None:
+        return None
+    label, domain, leaf_type = hit
+    return EntityResolution(label=label, domain=domain, leaf_type=leaf_type, key=label, params={})
 
 
 def _masterdata():
@@ -40,6 +71,7 @@ def _masterdata():
         {"name": "Umicore", "ticker": "UMI.BR", "is_private": False, "primary_segments": ["recycling"]},
         {"name": "ArcelorMittal", "ticker": "MT", "is_private": False, "primary_segments": ["steel"]},
     ]
+    md.resolve_entity.side_effect = _resolve_entity
     return md
 
 
@@ -67,40 +99,80 @@ def test_group_datasets_by_entity_buckets_under_named_competitor():
     assert by_label["General"]["datasets"][0]["tool"] == "web_search"
 
 
-def test_customers_candidates_interleave_segments_and_tag_them():
-    from core.subdomains import _customers_candidates
+def test_classify_entity_domain_prefers_canonical_resolution_over_competition():
+    """A dataset about a mining operator (BHP) must classify as mining_operators,
+    not competition, even though BHP is a researched ticker the manifest's
+    'tickers' list also carries — competition has a higher ownership priority
+    and would otherwise win the candidate-alias scan."""
+    md = _masterdata()
+    dataset = {
+        "tool": "get_equity_history", "title": "BHP 5y — 1255 row(s)",
+        "data_type": "financials", "label": "BHP 5y",
+        "series_id": "get_equity_history:BHP:5y",
+    }
+    manifest = {"tickers": ["BHP", "CAT"]}
+    domain, _segment = classify_entity_domain(dataset, md, manifest=manifest)
+    assert domain == "mining_operators"
 
-    cands = _customers_candidates({}, _masterdata())
 
-    labels_by_segment = {}
-    for c in cands:
-        labels_by_segment.setdefault(c.segment, []).append(c.label)
+def test_competition_candidates_excludes_entities_owned_by_another_domain():
+    """The manifest's free-text 'tickers' fallback must not manufacture a
+    competition candidate for an entity master data already owns elsewhere."""
+    from core.subdomains import _competition_candidates
 
-    assert labels_by_segment["Mining"] == ["BHP", "Freeport-McMoRan", "Codelco"]
-    assert labels_by_segment["Construction"] == ["DEME Group", "Vinci SA"]
-    assert labels_by_segment["Others"] == ["Umicore", "ArcelorMittal"]
-    # Round-robin interleave: Mining, Construction, Others, Mining, Construction, Others, Mining.
-    assert [c.segment for c in cands] == [
-        "Mining", "Construction", "Others",
-        "Mining", "Construction", "Others",
-        "Mining",
+    md = _masterdata()
+    manifest = {"tickers": ["BHP", "TSLA"]}
+    cands = _competition_candidates(manifest, md)
+    keys = {c.key for c in cands}
+    assert "BHP" not in keys
+    # TSLA resolves to nothing in this mock's master data, so it's still treated
+    # as an unresolved researched ticker (the pre-existing fallback behavior).
+    assert "TSLA" in keys
+
+
+def test_customer_segment_builders_split_by_domain():
+    """The three former customer segments are now separate domains, each with its
+    own master-data-backed candidate builder (no segment tagging)."""
+    from core.subdomains import (
+        _construction_companies_candidates,
+        _mining_operators_candidates,
+        _specialized_customers_candidates,
+    )
+    md = _masterdata()
+
+    assert [c.label for c in _mining_operators_candidates({}, md)] == [
+        "BHP", "Freeport-McMoRan", "Codelco",
+    ]
+    assert [c.label for c in _construction_companies_candidates({}, md)] == [
+        "DEME Group", "Vinci SA",
+    ]
+    assert [c.label for c in _specialized_customers_candidates({}, md)] == [
+        "Umicore", "ArcelorMittal",
     ]
 
 
-def test_group_datasets_by_entity_prefixes_segment_for_customers():
-    """Gate-2 buckets for the customers domain are segment-prefixed (e.g. 'Mining: BHP')."""
-    datasets = [
-        {"tool": "get_equity_price", "title": "BHP price", "series_id": "BHP"},
-        {"tool": "get_equity_price", "title": "DEME Group capex", "series_id": "DEME"},
-        {"tool": "get_equity_price", "title": "Umicore recycling capex", "series_id": "UMI"},
-    ]
+def test_group_datasets_by_entity_buckets_customers_by_domain():
+    """Each customer-segment domain buckets its datasets under the plain entity name."""
+    md = _masterdata()
     plan = {"entity_manifest": {}}
-    groups = group_datasets_by_entity("customers", datasets, plan, _masterdata())
 
-    labels = {g["label"] for g in groups}
-    assert "Mining: BHP" in labels
-    assert "Construction: DEME Group" in labels
-    assert "Others: Umicore" in labels
+    mining = group_datasets_by_entity(
+        "mining_operators",
+        [{"tool": "get_equity_price", "title": "BHP price", "series_id": "BHP"}], plan, md,
+    )
+    assert {g["label"] for g in mining} == {"BHP"}
+
+    construction = group_datasets_by_entity(
+        "construction_companies",
+        [{"tool": "get_equity_price", "title": "DEME Group capex", "series_id": "DEME"}], plan, md,
+    )
+    assert {g["label"] for g in construction} == {"DEME Group"}
+
+    others = group_datasets_by_entity(
+        "specialized_customers",
+        [{"tool": "get_equity_price", "title": "Umicore recycling capex", "series_id": "UMI"}], plan, md,
+    )
+    assert {g["label"] for g in others} == {"Umicore"}
 
 
 def test_group_datasets_by_entity_thematic_domain_single_bucket():
@@ -143,7 +215,7 @@ def test_degenerate_domain_returns_empty_list():
     """Short geopolitics evidence stays below the theme-extraction word floor, no LLM call."""
     mc = MergedChapter(domain="macro_geopolitics", text="Global GDP growth slowed in Q3.")
     plan = {"entity_manifest": {}}
-    subs, usage = enumerate_subdomains("macro_geopolitics", mc, plan, _masterdata())
+    subs, usage = enumerate_subdomains("general_search", mc, plan, _masterdata())
     assert subs == []
     assert usage == {}
 
@@ -254,9 +326,9 @@ def test_thematic_domain_rich_evidence_returns_themes(monkeypatch):
     }))
     monkeypatch.setattr(subdomains_module, "LLMClient", lambda: fake_client)
 
-    mc = MergedChapter(domain="macro_geopolitics", text=_LONG_GEOPOLITICS_TEXT)
+    mc = MergedChapter(domain="general_search", text=_LONG_GEOPOLITICS_TEXT)
     plan = {"entity_manifest": {}}
-    subs, usage = enumerate_subdomains("macro_geopolitics", mc, plan, _masterdata())
+    subs, usage = enumerate_subdomains("general_search", mc, plan, _masterdata())
 
     assert {s.label for s in subs} == {
         "Tariff policy on steel imports",
@@ -284,9 +356,9 @@ def test_thematic_domain_malformed_json_returns_empty(monkeypatch):
     fake_client = _fake_llm("not valid json at all")
     monkeypatch.setattr(subdomains_module, "LLMClient", lambda: fake_client)
 
-    mc = MergedChapter(domain="macro_geopolitics", text=_LONG_GEOPOLITICS_TEXT)
+    mc = MergedChapter(domain="general_search", text=_LONG_GEOPOLITICS_TEXT)
     plan = {"entity_manifest": {}}
-    subs, usage = enumerate_subdomains("macro_geopolitics", mc, plan, _masterdata())
+    subs, usage = enumerate_subdomains("general_search", mc, plan, _masterdata())
 
     assert subs == []
     assert usage["requests"] == 1
@@ -298,9 +370,9 @@ def test_thematic_domain_single_theme_is_degenerate(monkeypatch):
     }))
     monkeypatch.setattr(subdomains_module, "LLMClient", lambda: fake_client)
 
-    mc = MergedChapter(domain="macro_geopolitics", text=_LONG_GEOPOLITICS_TEXT)
+    mc = MergedChapter(domain="general_search", text=_LONG_GEOPOLITICS_TEXT)
     plan = {"entity_manifest": {}}
-    subs, _usage = enumerate_subdomains("macro_geopolitics", mc, plan, _masterdata())
+    subs, _usage = enumerate_subdomains("general_search", mc, plan, _masterdata())
 
     assert subs == []
 
@@ -310,9 +382,9 @@ def test_thematic_domain_llm_failure_returns_empty(monkeypatch):
     client.complete.side_effect = RuntimeError("network down")
     monkeypatch.setattr(subdomains_module, "LLMClient", lambda: client)
 
-    mc = MergedChapter(domain="macro_geopolitics", text=_LONG_GEOPOLITICS_TEXT)
+    mc = MergedChapter(domain="general_search", text=_LONG_GEOPOLITICS_TEXT)
     plan = {"entity_manifest": {}}
-    subs, usage = enumerate_subdomains("macro_geopolitics", mc, plan, _masterdata())
+    subs, usage = enumerate_subdomains("general_search", mc, plan, _masterdata())
 
     assert subs == []
     assert usage == {}

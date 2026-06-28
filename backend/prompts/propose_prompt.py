@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from retrieval.chroma_store import Chunk
 
-_DOMAINS = [
-    "competition", "distributors", "customers", "mining_projects",
-    "commodities", "macro_geopolitics", "general_search",
-]
+from core.domains import domain_keys
+
+_DOMAINS = domain_keys()
 
 # Collect-stage tool names — must match the registered tool `.name` values in
 # tools/registry.py exactly, or grounding drops the call and routing KeyErrors.
@@ -27,45 +26,38 @@ Given a research query and relevant background context, generate exactly {n} \
 diverse execution plans.
 
 Each plan specifies:
-- Which of the 7 intelligence domains to activate
+- Which of the 9 intelligence domains to activate
 - Which data-gathering tools to call, with what arguments
 - A rationale explaining what angle this plan investigates
 - An estimated token cost (integer, rough estimate)
 
-Available domains: competition, distributors, customers, mining_projects, \
-commodities, macro_geopolitics, general_search
+Available domains (each entity belongs to exactly one):
+- "competition": equipment-maker rivals that sell against Komatsu (Caterpillar, Hitachi \
+  Construction Machinery, Sandvik, Epiroc, Volvo CE, …).
+- "mining_operators": mining companies that BUY Komatsu equipment (BHP, Rio Tinto, Vale, …).
+- "construction_companies": construction & infrastructure contractors that buy Komatsu \
+  equipment (DEME, Besix, Vinci, Bechtel, …).
+- "specialized_customers": niche industrial buyers (metals recyclers, steelmakers, \
+  pulp/paper producers — Umicore, ArcelorMittal, Stora Enso, …).
+- "distributors": Komatsu's dealer/distribution network.
+- "commodities": commodity price series and cycles.
+- "mining_projects": specific mine sites / projects.
+- "macroeconomics": country/region macro indicators (rates, production, construction \
+  spending, FX) from FRED plus news/web.
+- "general_search": open-web themes, plus commodity demand-side CONSUMERS (EV/battery/auto \
+  OEMs — BYD, Volkswagen, Tesla, CATL, …) whose appetite drives commodity demand.
 
-Domain note: "competition" covers equipment-maker rivals only (Caterpillar, Hitachi \
-Construction Machinery, Sandvik, …) — companies that sell against Komatsu. "customers" \
-covers companies that BUY Komatsu equipment, spanning three segments: mining operators \
-(BHP, Rio Tinto, Vale, …), construction & infrastructure contractors from civil/marine \
-works to residential developers (DEME, Besix, Vinci, Bechtel, …), and niche industrial \
-buyers such as metals recyclers, steelmakers, or pulp/paper producers (Umicore, \
-ArcelorMittal, Stora Enso, …). All three segments are Komatsu's customers, not its rivals. \
-Never route a customer's tool calls into "competition", or an equipment maker's into \
-"customers".
-
-Third-party note: commodity CONSUMERS (EV/battery/auto OEMs and other large buyers — \
-BYD, Volkswagen, Tesla, CATL, …) are neither rivals nor Komatsu customers — they are third \
-parties whose demand moves commodity prices. When the research findings list these \
-third-party demand-side companies, route their tool calls (`get_equity_price`, \
-`get_equity_history`, `get_equity_financials`, `get_company_financials`, `news_search`, \
-`web_search`) into "macro_geopolitics" as the third-party demand angle — they belong in the \
-macro/demand picture, not "competition" or "customers".
+Routing is enforced downstream against Komatsu's master data, so simply tag each tool call \
+with the most natural domain above; a known company is automatically filed under its \
+canonical domain even if you mis-tag it. Do not split one company's calls across domains.
 
 Domain ownership note (avoid duplicate collection): each data point should be fetched by \
 exactly one domain, even if it's relevant to several.
 - `get_mining_metals_prices`, `get_energy_cost_prices`, `get_broad_commodity_cycle` belong \
-  to "commodities" only — never duplicate these calls under "macro_geopolitics" just \
-  because commodity prices are also a macro signal.
-- Equity/financials calls (`get_equity_price`, `get_equity_history`, `get_equity_financials`, \
-  `get_company_financials`) for a mining OPERATOR belong to "customers" or "mining_projects" \
-  only — never also call them under "macro_geopolitics" for the same operator. Only demand-side \
-  consumer tickers (not operators) belong to "macro_geopolitics".
-- "macro_geopolitics" should build its analysis from `get_fred_observations`, \
-  `get_macro_indicator`, `get_broad_commodity_cycle`, and news/web tools, plus the demand-side \
-  tickers above — it may reference commodity-price or operator findings from other domains' \
-  chapters in its rationale, but must not re-issue the tool calls that already collect them.
+  to "commodities" only.
+- "macroeconomics" builds its analysis from `get_fred_observations`, `get_macro_indicator`, \
+  and news/web tools — it may reference commodity-price or company findings from other \
+  domains in its rationale, but must not re-issue the tool calls that already collect them.
 
 Available tools: news_search, news_top_headlines, \
 get_mining_metals_prices, get_energy_cost_prices, \
@@ -78,8 +70,8 @@ masterdata_lookup, get_macro_indicator, search_fred_series, get_fred_series_by_t
 Tool usage guidance:
 - `get_mine_technical_report` pulls the SEC S-K 1300 Technical Report Summary (mineral
   reserves, mine life, project economics) for one mining company ticker — use it for
-  customers/mining_projects plans whenever a mine site's operator ticker is known, pairing
-  it with `mine_name` to target a specific project for diversified miners.
+  mining_operators/mining_projects plans whenever a mine site's operator ticker is known,
+  pairing it with `mine_name` to target a specific project for diversified miners.
 - `get_mining_metals_prices`'s `symbol` argument must be one of COPPER, ALUMINUM,
   GOLD, SILVER, XAU, XAG — never a company/equity ticker. If a mining operator
   (BHP, Rio Tinto, Vale, …) is relevant, map it to the commodity it produces and use
@@ -94,7 +86,7 @@ Tool usage guidance:
   instead of a single-point lookup.
 - If you aren't sure of an exact FRED `series_id` for the macro angle, schedule
   a `search_fred_series` (free-text) or `get_fred_series_by_tags` (structured
-  topic/frequency/seasonal-adjustment tags) call in "macro_geopolitics" to
+  topic/frequency/seasonal-adjustment tags) call in "macroeconomics" to
   surface relevant series directly in that chapter. You don't need to guess
   defensively either way — an invalid `series_id` passed to
   `get_macro_indicator`/`get_fred_observations` is auto-corrected via the same
@@ -137,9 +129,10 @@ Respond with ONLY a JSON object in this exact format (no other text):
   "plans": [
     {{
       "plan_id": "plan_001",
-      "domain_activations": {{"competition": true, "distributors": false, \
-"customers": false, "mining_projects": false, "commodities": true, \
-"macro_geopolitics": false, "general_search": false}},
+      "domain_activations": {{"commodities": true, "competition": true, \
+"mining_operators": false, "construction_companies": false, \
+"specialized_customers": false, "distributors": false, "mining_projects": false, \
+"macroeconomics": false, "general_search": false}},
       "entity_choices": {{"company": "Caterpillar", "commodity": "copper"}},
       "api_assignments": {{"financials": "fmp", "prices": "alpha_vantage"}},
       "tool_calls": [
@@ -181,8 +174,8 @@ _RESEARCH_SECTION_TEMPLATE = """\
 
 Pre-planning research findings (use these to make tool calls specific):
 - Competitors identified (equipment-maker rivals — route to "competition"): {competitors}
-- Customers identified (mining/construction/niche-industrial buyers — route to "customers"): {operators}
-- Third parties (commodity demand-side buyers — route to "macro_geopolitics"): {demand_side_companies}
+- Customers identified (mining/construction/niche-industrial buyers — route to "mining_operators", "construction_companies", or "specialized_customers"): {operators}
+- Third parties (commodity demand-side consumers — route to "general_search"): {demand_side_companies}
 - Stock tickers (call ticker-scoped tools for EVERY one of these, not just one): {tickers}
 - Commodities (with symbols): {commodities}
 - Mine sites / regions: {regions}

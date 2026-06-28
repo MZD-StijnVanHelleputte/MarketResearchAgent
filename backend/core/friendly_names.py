@@ -49,20 +49,12 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "get_fred_series_updates": "updated economic data series",
 }
 
-DOMAIN_DISPLAY_NAMES: dict[str, str] = {
-    "mining_projects": "Mining Projects",
-    "distributors": "Distributors",
-    "commodities": "Commodities",
-    "macro_geopolitics": "Macro & Geopolitics",
-    "customers": "Customers",
-    "general_search": "General Market Search",
-    "competition": "Competition",
-}
-
-
 def friendly_tool(tool_name: str) -> str:
     return TOOL_DISPLAY_NAMES.get(tool_name, tool_name.replace("_", " "))
 
 
 def friendly_domain(domain: str) -> str:
-    return DOMAIN_DISPLAY_NAMES.get(domain, domain.replace("_", " ").title())
+    # Domain display names live in the domain registry (core/domains.py).
+    from core.domains import display_name
+
+    return display_name(domain)

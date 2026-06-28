@@ -23,14 +23,14 @@ def test_assemble_returns_report_draft():
 
 def test_assemble_orders_chapters_by_domain_priority():
     chapters = [
-        {"domain": "macro_geopolitics", "text": "Macro text."},
+        {"domain": "macroeconomics", "text": "Macro text."},
         {"domain": "competition", "text": "Competition text."},
         {"domain": "commodities", "text": "Commodity text."},
     ]
     state = _make_state(chapters)
     draft = Assembler.assemble(state, run_id="run-002", query="q")
     domains = [ch["domain"] for ch in draft.chapters]
-    assert domains == ["competition", "commodities", "macro_geopolitics"]
+    assert domains == ["commodities", "competition", "macroeconomics"]
 
 
 def test_assemble_all_known_domains_in_canonical_order():

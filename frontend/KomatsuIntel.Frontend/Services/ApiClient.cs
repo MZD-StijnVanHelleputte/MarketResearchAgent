@@ -74,6 +74,14 @@ public class ApiClient(HttpClient http)
     public Task StopAfterTimeoutAsync(string runId, CancellationToken ct = default)
         => http.PostAsync($"runs/{runId}/timeout_confirm/stop", null, ct);
 
+    // POST /runs/{runId}/stall_confirm/continue — stall prompt: keep the agent running
+    public Task ContinueAfterStallAsync(string runId, CancellationToken ct = default)
+        => http.PostAsync($"runs/{runId}/stall_confirm/continue", null, ct);
+
+    // POST /runs/{runId}/stall_confirm/finalize — stall prompt: finalize this phase and continue
+    public Task FinalizeAfterStallAsync(string runId, CancellationToken ct = default)
+        => http.PostAsync($"runs/{runId}/stall_confirm/finalize", null, ct);
+
     // POST /runs/{runId}/episodic/save — persist a completed run to episodic memory
     public async Task<EpisodicSaveResponse?> SaveToEpisodicAsync(string runId, CancellationToken ct = default)
     {
@@ -234,7 +242,13 @@ public record SourceDto(
     int Count = 0,
     bool Failed = false,
     string? Reason = null);
-public record RunStatus(string Status, string Stage, string? Brief, string? Error, List<SourceDto>? Sources, JsonElement? GateData = null, string? StatusMessage = null, List<string>? ActivityLog = null, string? ExecSummary = null, List<string>? Warnings = null, int? ToolCallsTotal = null, int? ToolCallsCompleted = null, string? CurrentToolLabel = null, string? CurrentDomain = null);
+public record RunStatus(string Status, string Stage, string? Brief, string? Error, List<SourceDto>? Sources, JsonElement? GateData = null, string? StatusMessage = null, List<string>? ActivityLog = null, string? ExecSummary = null, List<string>? Warnings = null, int? ToolCallsTotal = null, int? ToolCallsCompleted = null, string? CurrentToolLabel = null, string? CurrentDomain = null, int? ToolCallsSucceeded = null, int? ToolCallsFailed = null, CollectionPlanView? CollectionPlan = null);
+
+// Live stem→leaf collection plan with per-tool-call status (backend: build_collection_plan).
+public record CollectionPlanView(int Total, int Succeeded, int Failed, int Pending, List<CpDomain> Domains);
+public record CpDomain(string Domain, string Display, int Total, int Succeeded, int Failed, int Pending, List<CpLeaf> Leaves);
+public record CpLeaf(string Key, string Label, string LeafType, int Total, int Succeeded, int Failed, int Pending, List<CpToolCall> ToolCalls);
+public record CpToolCall(string Tool, string Display, string Status, string? Reason);
 
 // Test runner
 public record TestRunResult(bool Passed, string Output);

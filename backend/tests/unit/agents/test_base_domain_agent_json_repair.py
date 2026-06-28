@@ -3,11 +3,11 @@ leak raw JSON into chapter text. Either the prose is recovered, or parsing raise
 run()'s existing fallback (which preserves figures/citations from raw tool results) is used."""
 import pytest
 
-from agents.commodities_agent import CommoditiesAgent
+from agents import make_domain_agent
 
 
 def test_parse_result_recovers_text_when_sibling_key_is_malformed():
-    agent = CommoditiesAgent()
+    agent = make_domain_agent("commodities")
     raw = (
         '{"domain": "commodities", "text": "Copper at $4.12/lb.", '
         '"citations": ["unterminated'
@@ -18,6 +18,6 @@ def test_parse_result_recovers_text_when_sibling_key_is_malformed():
 
 
 def test_parse_result_raises_on_totally_unparseable_response():
-    agent = CommoditiesAgent()
+    agent = make_domain_agent("commodities")
     with pytest.raises(ValueError):
         agent._parse_result("completely unparseable, no json here", "plan-1")

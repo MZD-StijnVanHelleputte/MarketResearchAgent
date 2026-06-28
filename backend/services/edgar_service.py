@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # 2021-01-01, so scanning the most recent annual reports is sufficient — no
 # need to paginate into a filer's older filing history.
 _ANNUAL_FORMS = {"10-K", "20-F"}
-_MAX_FILINGS_SCANNED = 5
+_MAX_FILINGS_SCANNED = 25
 
 # The filing index page's "Document Format Files" table is the only place EDGAR
 # exposes exhibit *type* (e.g. "EX-96.3") — the machine-readable index.json

@@ -42,6 +42,8 @@ from models.llm_retry import call_with_backoff
 from models.usage import accumulate, llm_usage, merge_usage
 from prompts.synthesize_prompt import exec_summary_messages
 from core.event_logger import log_event, run_lock, update_run_context
+from core import tool_circuit_breaker as breaker
+from core.domains import domain_keys
 from core.friendly_names import friendly_domain
 from core.tot.proposer import PlanProposer
 from core.tot.scorer import score_and_prune
@@ -58,6 +60,7 @@ from core.subdomains import (
     enumerate_subdomains,
     assemble_entity_evidence,
     group_datasets_by_entity,
+    classify_entity_domain,
 )
 from tools.registry import tool_display_name
 from core import completeness
@@ -69,15 +72,7 @@ from retrieval.chunker import Chunker
 
 logger = logging.getLogger(__name__)
 
-_DOMAINS = [
-    "competition",
-    "distributors",
-    "customers",
-    "mining_projects",
-    "commodities",
-    "macro_geopolitics",
-    "general_search",
-]
+_DOMAINS = domain_keys()
 
 _UNSTRUCTURED_TOOLS = {
     "news_search",
@@ -132,6 +127,10 @@ class AgentState(TypedDict):
     # Number of times the user has clicked "continue" on a timeout prompt;
     # the next prompt is due at (timeout_prompt_count + 1) * soft_timeout_s of active elapsed time
     timeout_prompt_count: int
+    # Set by the stall-watchdog "finalize" action: when True, the long-running nodes
+    # short-circuit to the partial-brief path instead of doing more work, so a stalled
+    # run can be pushed to a report + the next gate instead of hanging forever.
+    force_finalize: bool
 
 
 # ---------------------------------------------------------------------------
@@ -166,19 +165,68 @@ def _draft_ok(draft: dict | None) -> bool:
     return not draft.get("tool_errors")
 
 
+# Row-level data isn't useful on a human "does this look right" review screen and
+# blows up the Gate 2 payload (e.g. a 500-row OHLCV table per company); keep a
+# small preview plus the count/columns so the reviewer still sees shape and a
+# sample, without embedding the full series for every entity.
+_GATE2_ROW_PREVIEW = 5
+_GATE2_SUMMARY_PREVIEW_CHARS = 1200
+_GATE2_SUMMARY_TRUNCATION_NOTE = (
+    "\n\n[Preview truncated for Gate 2; full extracted content remains available "
+    "to synthesis.]"
+)
 
 
-def _draft_source_entries(domain: str, draft: dict) -> list[dict]:
+def _gate2_dataset_view(dataset: dict) -> dict:
+    """Return a compact Gate-2 preview of a dataset without mutating graph state."""
+    trimmed: dict | None = None
+
+    rows = dataset.get("rows")
+    if isinstance(rows, list) and len(rows) > _GATE2_ROW_PREVIEW:
+        trimmed = dict(dataset)
+        trimmed["rows"] = rows[:_GATE2_ROW_PREVIEW]
+        trimmed["rows_truncated"] = True
+
+    summary = dataset.get("summary")
+    if isinstance(summary, str) and len(summary) > _GATE2_SUMMARY_PREVIEW_CHARS:
+        if trimmed is None:
+            trimmed = dict(dataset)
+        trimmed["summary"] = (
+            summary[:_GATE2_SUMMARY_PREVIEW_CHARS].rstrip()
+            + _GATE2_SUMMARY_TRUNCATION_NOTE
+        )
+        trimmed["summary_truncated"] = True
+
+    if trimmed is None:
+        return dataset
+    return trimmed
+
+
+def _draft_source_entries(
+    domain: str,
+    draft: dict,
+    masterdata=None,
+    demand_side_companies: list[str] | None = None,
+) -> list[dict]:
     """Turn one domain draft into enriched Sources-panel entries.
 
     One entry per collected dataset (typed: data_type + label + count) and one per
     failed tool (rendered in red on the frontend), so the live panel reflects *what*
     was collected and *what was attempted but failed* — not just a list of URLs.
+
+    Each dataset is cross-checked against every master-data-backed domain so a
+    dataset collected by one domain's agent but actually about an entity belonging
+    to another domain (e.g. a Caterpillar mention surfaced while collecting
+    "mining_operators") is filed under the right domain instead.
     """
     entries: list[dict] = []
     for ds in draft.get("datasets") or []:
+        true_domain, segment = (
+            classify_entity_domain(ds, masterdata, demand_side_companies)
+            if masterdata is not None else (None, "")
+        )
         entries.append({
-            "domain": domain,
+            "domain": true_domain or domain,
             "tool": tool_display_name(ds.get("tool", "")),
             "title": ds.get("title") or "",
             "data_type": ds.get("data_type", "data"),
@@ -187,6 +235,7 @@ def _draft_source_entries(domain: str, draft: dict) -> list[dict]:
             "url": None,
             "published_at": None,
             "failed": False,
+            "segment": segment,
         })
     for ft in draft.get("failed_tools") or []:
         display = ft.get("tool_display") or tool_display_name(ft.get("tool", ""))
@@ -220,12 +269,13 @@ def _draft_source_entries(domain: str, draft: dict) -> list[dict]:
 
 
 async def _persist_partial_sources(
-    run_id: str, session_id: str, query: str, domain: str, draft: "ChapterDraft"
+    run_id: str, session_id: str, query: str, domain: str, draft: "ChapterDraft",
+    masterdata=None, demand_side_companies: list[str] | None = None,
 ) -> None:
     """Append one domain's sources to the run row as soon as its agent finishes,
     so the frontend Sources panel can populate live during collection instead of
     waiting for the whole collect_node (and Gate 2) to complete."""
-    new_entries = _draft_source_entries(domain, draft.model_dump())
+    new_entries = _draft_source_entries(domain, draft.model_dump(), masterdata, demand_side_companies)
     if not new_entries:
         return
     store = SqliteStore()
@@ -334,6 +384,8 @@ def _timeout_interrupt_if_needed(state: AgentState) -> None:
 # ---------------------------------------------------------------------------
 
 async def understand_node(state: AgentState) -> dict:
+    if state.get("force_finalize"):
+        return {"stage": "partial"}
     try:
         _timeout_interrupt_if_needed(state)
     except _TimeoutStopSignal:
@@ -505,28 +557,45 @@ async def understand_node(state: AgentState) -> dict:
 
     usage_delta = accumulate(state, proposer.last_usage, grounder_usage, researcher_usage, merger_usage)
 
-    if settings.gates.gate_1_enabled and not settings.gates.auto_approve_gates:
-        gate1_payload = {
-            "gate": 1,
-            "plan": consolidated.model_dump(),
-        }
-        decision = interrupt(gate1_payload)
-        if decision == "redirect":
-            return {"plans": [], "stage": "understand", **usage_delta}
+    store = SqliteStore()
+    auto_approve = settings.gates.auto_approve_gates or bool(await store.get_preference("auto_approve_gates"))
+    gate1_needed = settings.gates.gate_1_enabled and not auto_approve
 
     # Pass the consolidated plan forward. collect_node iterates `plans` as a list;
-    # wrapping in a list of one preserves backward compatibility.
+    # wrapping in a list of one preserves backward compatibility. Gate 1's
+    # interrupt() lives in its own node (gate1_node) rather than here, since
+    # LangGraph replays a node from the top on resume — interrupting after all
+    # this expensive ToT work would silently redo it on every approval.
     return {
         "plans": [consolidated.model_dump()],
-        "stage": "collect",
+        "stage": "understand" if gate1_needed else "collect",
         "context_messages": cw.to_state(),
         **usage_delta,
     }
 
 
+async def gate1_node(state: AgentState) -> dict:
+    """Gate 1 — human review of the consolidated research plan.
+
+    Split out of understand_node so that approving the gate doesn't replay the
+    expensive ToT planning pipeline (LangGraph re-runs a node from the top on
+    resume). This node only re-reads the already-computed plan from state.
+    """
+    plans = state.get("plans") or []
+    plan = plans[0] if plans else {}
+    decision = interrupt({"gate": 1, "plan": plan})
+    if decision == "redirect":
+        return {"plans": [], "stage": "understand"}
+    return {"stage": "collect"}
+
+
 async def collect_node(state: AgentState) -> dict:
     # Tag progress events from this node with the collect stage (see synthesize_node).
     update_run_context(stage="collect")
+    if state.get("force_finalize"):
+        # Stall watchdog → finalize: stop collecting and route to the partial brief,
+        # which synthesizes whatever drafts were already committed by a prior pass.
+        return {"stage": "partial"}
     try:
         _timeout_interrupt_if_needed(state)
     except _TimeoutStopSignal:
@@ -543,6 +612,13 @@ async def collect_node(state: AgentState) -> dict:
     retriever = Retriever()
     chunker = Chunker(settings.retrieval.chunk_size, settings.retrieval.chunk_overlap)
     collection = f"{settings.stores.chroma_collected_prefix}_{state['run_id']}"
+
+    # Used to re-check each collected dataset against competitor/customer/third-party
+    # masterdata so it lands under the domain its content actually belongs to, not
+    # just the domain of the agent that happened to collect it.
+    masterdata = MasterDataService()
+    primary_entity_manifest = plans[0].get("entity_manifest", {}) if plans else {}
+    demand_side_companies = primary_entity_manifest.get("demand_side_companies") or []
 
     sem = asyncio.Semaphore(settings.max_parallel_subagents)
 
@@ -613,7 +689,8 @@ async def collect_node(state: AgentState) -> dict:
         collected_tool_errors.extend(draft.tool_errors)
         draft_usages.append(draft.usage)
         await _persist_partial_sources(
-            state["run_id"], state["session_id"], state["user_query"], domain, draft
+            state["run_id"], state["session_id"], state["user_query"], domain, draft,
+            masterdata, demand_side_companies,
         )
 
     # Build the sources manifest from the full merged chapter_sets (carried + new), so the
@@ -623,11 +700,26 @@ async def collect_node(state: AgentState) -> dict:
     manifest: dict[str, list] = {d: [] for d in _DOMAINS}
     for key, draft in chapter_sets.items():
         _plan_id, _, domain = key.partition("::")
-        manifest.setdefault(domain, []).extend(_draft_source_entries(domain, draft))
+        manifest.setdefault(domain, []).extend(
+            _draft_source_entries(domain, draft, masterdata, demand_side_companies)
+        )
 
     if collected_tool_errors:
         logger.warning("collect_node: %d tool/agent failures: %s",
                        len(collected_tool_errors), collected_tool_errors)
+
+    # Tool health: surface which tools failed (and which were blocked by the circuit
+    # breaker, and why) so the failure rate is visible rather than buried in retries.
+    health = breaker.summary(state["run_id"])
+    if health:
+        blocked = [t for t, h in health.items() if h["blocked"]]
+        await log_event(
+            "tool_health",
+            (f"Tool health: {len(blocked)} tool(s) blocked this run"
+             if blocked else "Tool health: failures recorded but none blocked"),
+            detail={"tools": health, "blocked": blocked},
+            level="warning" if blocked else "info",
+        )
 
     # Confidence over the union of all attempted pairs (carried + newly run), so it rises
     # across backtracks and routes to synthesis once every domain has a good draft.
@@ -666,23 +758,42 @@ async def data_review_node(state: AgentState) -> dict:
     failures shown as gaps. On "redirect" the collection is reset and re-run; on
     approve the graph proceeds to synthesis.
     """
-    if not settings.gates.gate_2_enabled or settings.gates.auto_approve_gates:
+    store = SqliteStore()
+    auto_approve = settings.gates.auto_approve_gates or bool(await store.get_preference("auto_approve_gates"))
+    if not settings.gates.gate_2_enabled or auto_approve:
         return {"stage": "synthesize"}
 
     chapter_sets: dict[str, dict] = dict(state.get("chapter_sets") or {})
     plans = state.get("plans") or []
     primary_plan = plans[0] if plans else {}
     masterdata = MasterDataService()
-    domains_payload = []
+    entity_manifest = primary_plan.get("entity_manifest", {}) if isinstance(primary_plan, dict) else {}
+    demand_side_companies = entity_manifest.get("demand_side_companies") or []
+
+    # Collect every domain's datasets/failed tools first, then re-check each dataset
+    # against cross-domain masterdata so one that's actually about a competitor or
+    # third-party demand company (e.g. surfaced by a customer agent's web search)
+    # moves to the domain it actually belongs to before bucketing by entity.
+    datasets_by_domain: dict[str, list[dict]] = {}
+    failed_tools_by_domain: dict[str, list[dict]] = {}
     for domain in _DOMAINS:
         drafts = [v for k, v in chapter_sets.items() if k.endswith(f"::{domain}")]
         if not drafts:
             continue
-        datasets: list[dict] = []
-        failed_tools: list[dict] = []
         for d in drafts:
-            datasets.extend(d.get("datasets") or [])
-            failed_tools.extend(d.get("failed_tools") or [])
+            failed_tools_by_domain.setdefault(domain, []).extend(d.get("failed_tools") or [])
+            for ds in d.get("datasets") or []:
+                true_domain, _segment = classify_entity_domain(
+                    ds, masterdata, demand_side_companies, entity_manifest
+                )
+                datasets_by_domain.setdefault(true_domain or domain, []).append(
+                    _gate2_dataset_view(ds)
+                )
+
+    domains_payload = []
+    for domain in _DOMAINS:
+        datasets = datasets_by_domain.get(domain, [])
+        failed_tools = failed_tools_by_domain.get(domain, [])
         if not datasets and not failed_tools:
             continue
         entities = group_datasets_by_entity(domain, datasets, primary_plan, masterdata)
@@ -725,16 +836,24 @@ async def partial_brief_node(state: AgentState) -> dict:
     synth_usages: list[dict] = []
     if chapter_sets:
         synth_agent = SynthesisAgent()
-        for key, draft_dict in chapter_sets.items():
+        sem = asyncio.Semaphore(settings.synthesis.max_parallel_chapters)
+
+        async def _synth_partial(key: str, draft_dict: dict) -> dict:
             domain = draft_dict.get("domain") or (key.split("::")[-1] if "::" in key else key)
             mc = MergedChapter(domain=domain, text=draft_dict.get("text", ""))
-            try:
-                result = synth_agent.run(domain, mc, [], [])
-                synth_usages.append(result.get("usage", {}))
-                chapters.append(result)
-            except Exception as exc:
-                logger.warning("partial_brief_node: synthesis failed for %s: %s", domain, exc)
-                chapters.append({"domain": domain, "text": mc.text})
+            async with sem:
+                try:
+                    return await asyncio.to_thread(synth_agent.run, domain, mc, [], [])
+                except Exception as exc:
+                    logger.warning("partial_brief_node: synthesis failed for %s: %s", domain, exc)
+                    return {"domain": domain, "text": mc.text}
+
+        results = await asyncio.gather(
+            *[_synth_partial(k, d) for k, d in chapter_sets.items()]
+        )
+        for result in results:
+            synth_usages.append(result.get("usage", {}))
+            chapters.append(result)
     else:
         all_warnings.append("Partial brief: no data was collected before the guardrail fired.")
 
@@ -861,6 +980,10 @@ async def synthesize_node(state: AgentState) -> dict:
     # context var is otherwise left at "understand" (set once at run start), so
     # chapter-writing events would be mis-filed under the wrong phase.
     update_run_context(stage="synthesize")
+    if state.get("force_finalize"):
+        # Stall watchdog → finalize: route to the partial brief, which keeps any
+        # synthesis_chapters already in state or rebuilds from the committed chapter_sets.
+        return {"stage": "partial"}
     # Deliberately no soft-timeout interrupt here. Synthesis is the final
     # productive phase: pausing it to ask "continue or stop?" risks discarding
     # work that lives in local variables until this node's final return, and a
@@ -939,18 +1062,28 @@ async def synthesize_node(state: AgentState) -> dict:
         if distinct_pruned:
             recovery_plan = distinct_pruned[0]
             recovery_drafts: list[ChapterDraft] = []
-            # Run recovery agents sequentially (not parallel — this is a recovery path)
+            # Run recovery agents concurrently, bounded by max_parallel_subagents.
             from agents import DOMAIN_AGENTS
-            for domain in _active_domains(recovery_plan):
+            rec_sem = asyncio.Semaphore(settings.max_parallel_subagents)
+
+            async def _run_recovery(domain: str) -> ChapterDraft | None:
                 agent_cls = DOMAIN_AGENTS.get(domain)
                 if agent_cls is None:
-                    continue
-                try:
-                    draft = await agent_cls().run(recovery_plan, state["run_id"])
+                    return None
+                async with rec_sem:
+                    try:
+                        return await agent_cls().run(recovery_plan, state["run_id"])
+                    except Exception as exc:
+                        logger.warning("recovery: domain %s failed: %s", domain, exc)
+                        return None
+
+            rec_results = await asyncio.gather(
+                *[_run_recovery(d) for d in _active_domains(recovery_plan)]
+            )
+            for draft in rec_results:
+                if draft is not None:
                     recovery_drafts.append(draft)
                     usage_dicts.append(draft.usage)
-                except Exception as exc:
-                    logger.warning("recovery: domain %s failed: %s", domain, exc)
 
             if recovery_drafts:
                 supplementary_text = "\n\n".join(
@@ -980,115 +1113,146 @@ async def synthesize_node(state: AgentState) -> dict:
     synth_agent = SynthesisAgent()
     masterdata = MasterDataService()
     primary_plan = plans[0] if plans else {}
-    chapters: list[dict] = []
 
-    for mc in merged_chapters:
-        await log_event("progress", f"Writing the {friendly_domain(mc.domain)} chapter…")
-        sub_question = f"{mc.domain} signals relevant to: {query}"
-        try:
-            raw_retrieved, stale = retriever.retrieve(
-                sub_question,
-                collection,
-                top_k=settings.retrieval.top_k,
-            )
-            all_warnings.extend(w.message for w in stale)
-        except Exception:
-            raw_retrieved = []
+    # Synthesize all domain chapters concurrently. The number of chapters in flight is
+    # bounded by max_parallel_chapters; the actual LLM-call concurrency is capped
+    # process-wide by crew_semaphore (settings.llm.max_concurrent_calls), so this can't
+    # overwhelm the API key no matter how many domains there are. Each task accumulates
+    # its own warnings/injection-flags/usages and the results are merged in order after
+    # the gather, so chapters never race on shared state.
+    chapter_sem = asyncio.Semaphore(settings.synthesis.max_parallel_chapters)
 
-        # Phase 9.1: Filter injection-tainted chunks before passing to synthesis
-        clean_retrieved = []
-        for chunk in raw_retrieved:
-            chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
-            warning = _guardrails.scan_for_injection(chunk_text)
-            if warning:
-                flag = f"Chunk filtered ({mc.domain}): {warning}"
-                all_injection_flags.append(flag)
-                logger.warning("synthesize_node: %s", flag)
-            else:
-                clean_retrieved.append(chunk)
-
-        if settings.synthesis.hierarchical_enabled:
-            subdomains, enum_usage = enumerate_subdomains(mc.domain, mc, primary_plan, masterdata)
-            if enum_usage:
-                usage_dicts.append(enum_usage)
-        else:
-            subdomains = []
-
-        if len(subdomains) >= 2:
-            # --- Tier 1: per-entity analyses (run concurrently, bounded) ---
-            sem = asyncio.Semaphore(settings.synthesis.max_parallel_subdomains)
-
-            async def _synth_one(sub):
-                evidence = assemble_entity_evidence(
-                    sub, mc, retriever, collection, _guardrails, query
+    async def _synth_chapter(mc: MergedChapter) -> dict:
+        local_warnings: list[str] = []
+        local_injection: list[str] = []
+        local_usages: list[dict] = []
+        chapter: dict | None = None
+        async with chapter_sem:
+            await log_event("progress", f"Writing the {friendly_domain(mc.domain)} chapter…")
+            sub_question = f"{mc.domain} signals relevant to: {query}"
+            try:
+                # to_thread so a slow retrieval for one chapter doesn't block the others.
+                raw_retrieved, stale = await asyncio.to_thread(
+                    retriever.retrieve, sub_question, collection, settings.retrieval.top_k,
                 )
-                all_injection_flags.extend(evidence.injection_flags)
-                await log_event("progress", f"Analyzing {sub.label} for {friendly_domain(mc.domain)}…")
-                async with sem:
-                    return await asyncio.to_thread(
-                        synth_agent.run_subchapter,
-                        mc.domain,
-                        sub.key,
-                        sub.label,
-                        evidence.figures,
-                        evidence.datasets,
-                        evidence.citations,
-                        evidence.retrieved_chunks,
-                        query,
+                local_warnings.extend(w.message for w in stale)
+            except Exception:
+                raw_retrieved = []
+
+            # Phase 9.1: Filter injection-tainted chunks before passing to synthesis
+            clean_retrieved = []
+            for chunk in raw_retrieved:
+                chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
+                warning = _guardrails.scan_for_injection(chunk_text)
+                if warning:
+                    flag = f"Chunk filtered ({mc.domain}): {warning}"
+                    local_injection.append(flag)
+                    logger.warning("synthesize_node: %s", flag)
+                else:
+                    clean_retrieved.append(chunk)
+
+            if settings.synthesis.hierarchical_enabled:
+                subdomains, enum_usage = await asyncio.to_thread(
+                    enumerate_subdomains, mc.domain, mc, primary_plan, masterdata
+                )
+                if enum_usage:
+                    local_usages.append(enum_usage)
+            else:
+                subdomains = []
+
+            if len(subdomains) >= 2:
+                # --- Tier 1: per-entity analyses (run concurrently, bounded) ---
+                sem = asyncio.Semaphore(settings.synthesis.max_parallel_subdomains)
+
+                async def _synth_one(sub):
+                    evidence = assemble_entity_evidence(
+                        sub, mc, retriever, collection, _guardrails, query
+                    )
+                    local_injection.extend(evidence.injection_flags)
+                    await log_event("progress", f"Analyzing {sub.label} for {friendly_domain(mc.domain)}…")
+                    async with sem:
+                        return await asyncio.to_thread(
+                            synth_agent.run_subchapter,
+                            mc.domain,
+                            sub.key,
+                            sub.label,
+                            evidence.figures,
+                            evidence.datasets,
+                            evidence.citations,
+                            evidence.retrieved_chunks,
+                            query,
+                        )
+
+                subchapters = list(await asyncio.gather(*[_synth_one(s) for s in subdomains]))
+
+                if settings.synthesis.completeness_gate_enabled:
+                    subchapters = await _remediate_subchapters(
+                        mc, subdomains, subchapters, synth_agent, query,
+                        retriever, collection, _guardrails, local_warnings,
                     )
 
-            subchapters = await asyncio.gather(*[_synth_one(s) for s in subdomains])
-            subchapters = list(subchapters)
+                for sc in subchapters:
+                    local_usages.append(sc.get("usage", {}))
 
-            if settings.synthesis.completeness_gate_enabled:
-                subchapters = await _remediate_subchapters(
-                    mc, subdomains, subchapters, synth_agent, query,
-                    retriever, collection, _guardrails, all_warnings,
+                # --- Tier 2: roll the entity analyses up into the domain chapter ---
+                rollup = await asyncio.to_thread(
+                    synth_agent.run_rollup, mc.domain, mc, subchapters, query
                 )
+                local_usages.append(rollup.get("usage", {}))
+                await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
+                chapter = {
+                    "domain": mc.domain,
+                    "text": rollup["text"],
+                    "figures": dict(mc.figures),
+                    "datasets": mc.datasets,
+                    "subchapters": subchapters,
+                }
+                logger.info(
+                    "synthesize_node: %s decomposed into %d subchapters",
+                    mc.domain, len(subchapters),
+                )
+            else:
+                # Degenerate domain → legacy single-pass synthesis (no subchapters).
+                result = await asyncio.to_thread(
+                    synth_agent.run, mc.domain, mc, clean_retrieved, [], query
+                )
+                local_usages.append(result.get("usage", {}))
+                result["datasets"] = mc.datasets
+                result["subchapters"] = []
 
-            for sc in subchapters:
-                usage_dicts.append(sc.get("usage", {}))
+                if settings.synthesis.completeness_gate_enabled and completeness.is_fallback_text(
+                    result.get("text", "")
+                ):
+                    # One resynthesis retry (benefits from synthesis_agent's retry/backoff);
+                    # if it's still a placeholder, replace it with an honest message.
+                    retry = await asyncio.to_thread(
+                        synth_agent.run, mc.domain, mc, clean_retrieved, [], query
+                    )
+                    local_usages.append(retry.get("usage", {}))
+                    if not completeness.is_fallback_text(retry.get("text", "")):
+                        retry["datasets"] = mc.datasets
+                        retry["subchapters"] = []
+                        result = retry
+                        local_warnings.append(f"completeness_gate: resynthesized {mc.domain} after initial gap")
+                    else:
+                        result["text"] = completeness.honest_fallback_message(mc.domain)
+                        local_warnings.append(f"completeness_gate: {mc.domain} still incomplete after remediation")
 
-            # --- Tier 2: roll the entity analyses up into the domain chapter ---
-            rollup = synth_agent.run_rollup(mc.domain, mc, subchapters, query)
-            usage_dicts.append(rollup.get("usage", {}))
-            await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
-            chapters.append({
-                "domain": mc.domain,
-                "text": rollup["text"],
-                "figures": dict(mc.figures),
-                "datasets": mc.datasets,
-                "subchapters": subchapters,
-            })
-            logger.info(
-                "synthesize_node: %s decomposed into %d subchapters",
-                mc.domain, len(subchapters),
-            )
-        else:
-            # Degenerate domain → legacy single-pass synthesis (no subchapters).
-            result = synth_agent.run(mc.domain, mc, clean_retrieved, [], query)
-            usage_dicts.append(result.get("usage", {}))
-            result["datasets"] = mc.datasets
-            result["subchapters"] = []
+                chapter = result
+                await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
+        return {
+            "chapter": chapter, "warnings": local_warnings,
+            "injection_flags": local_injection, "usages": local_usages,
+        }
 
-            if settings.synthesis.completeness_gate_enabled and completeness.is_fallback_text(
-                result.get("text", "")
-            ):
-                # One resynthesis retry (benefits from synthesis_agent's retry/backoff);
-                # if it's still a placeholder, replace it with an honest message.
-                retry = synth_agent.run(mc.domain, mc, clean_retrieved, [], query)
-                usage_dicts.append(retry.get("usage", {}))
-                if not completeness.is_fallback_text(retry.get("text", "")):
-                    retry["datasets"] = mc.datasets
-                    retry["subchapters"] = []
-                    result = retry
-                    all_warnings.append(f"completeness_gate: resynthesized {mc.domain} after initial gap")
-                else:
-                    result["text"] = completeness.honest_fallback_message(mc.domain)
-                    all_warnings.append(f"completeness_gate: {mc.domain} still incomplete after remediation")
-
-            chapters.append(result)
-            await log_event("progress", f"Finished the {friendly_domain(mc.domain)} chapter.")
+    chapter_results = await asyncio.gather(*[_synth_chapter(mc) for mc in merged_chapters])
+    chapters: list[dict] = []
+    for res in chapter_results:  # gather preserves merged_chapters order
+        if res["chapter"] is not None:
+            chapters.append(res["chapter"])
+        all_warnings.extend(res["warnings"])
+        all_injection_flags.extend(res["injection_flags"])
+        usage_dicts.extend(res["usages"])
 
     # If all synthesis agents failed, fall back to raw merged chapter text so we always
     # produce a non-empty brief rather than an empty document.
@@ -1177,38 +1341,17 @@ async def synthesize_node(state: AgentState) -> dict:
         f"(overlap={overlap:.2f}, merge_log={len(merge_log)} resolutions).",
     )
 
-    if settings.gates.gate_3_enabled and not settings.gates.auto_approve_gates:
-        sections = [
-            {
-                "title": ch["domain"].replace("_", " ").title(),
-                "content": ch["text"][:800],
-                "subsections": [
-                    {
-                        "title": sc.get("subdomain_label", sc.get("subdomain_key", "")),
-                        "content": sc.get("text", "")[:600],
-                    }
-                    for sc in (ch.get("subchapters") or [])
-                ],
-            }
-            for ch in chapters
-        ]
-        gate3_payload = {
-            "gate": 3,
-            "sections": sections,
-            "executive_summary": exec_summary,
-            "warnings": all_warnings,
-        }
-        decision = interrupt(gate3_payload)
-        if decision == "redirect":
-            return {
-                "synthesis_chapters": [], "exec_summary": "", "stage": "synthesize",
-                **accumulate(state, *usage_dicts),
-            }
+    store = SqliteStore()
+    auto_approve = settings.gates.auto_approve_gates or bool(await store.get_preference("auto_approve_gates"))
+    gate3_needed = settings.gates.gate_3_enabled and not auto_approve
 
+    # Gate 3's interrupt() lives in its own node (gate3_node) rather than here,
+    # since LangGraph replays a node from the top on resume — interrupting
+    # after all this synthesis work would silently redo it on every approval.
     return {
         "synthesis_chapters": chapters,
         "merge_log": merge_log,
-        "stage": "done",
+        "stage": "synthesize" if gate3_needed else "done",
         "context_messages": cw.to_state(),
         "warnings": all_warnings,
         "injection_flags": all_injection_flags,
@@ -1216,6 +1359,40 @@ async def synthesize_node(state: AgentState) -> dict:
         "citation_registry": citation_registry,
         **accumulate(state, *usage_dicts),
     }
+
+
+async def gate3_node(state: AgentState) -> dict:
+    """Gate 3 — human review of the synthesized intelligence brief.
+
+    Split out of synthesize_node so that approving the gate doesn't replay the
+    expensive synthesis pipeline (LangGraph re-runs a node from the top on
+    resume). This node only re-reads the already-computed chapters from state.
+    """
+    chapters = state.get("synthesis_chapters") or []
+    sections = [
+        {
+            "title": ch["domain"].replace("_", " ").title(),
+            "content": ch["text"][:800],
+            "subsections": [
+                {
+                    "title": sc.get("subdomain_label", sc.get("subdomain_key", "")),
+                    "content": sc.get("text", "")[:600],
+                }
+                for sc in (ch.get("subchapters") or [])
+            ],
+        }
+        for ch in chapters
+    ]
+    gate3_payload = {
+        "gate": 3,
+        "sections": sections,
+        "executive_summary": state.get("exec_summary", ""),
+        "warnings": state.get("warnings", []),
+    }
+    decision = interrupt(gate3_payload)
+    if decision == "redirect":
+        return {"synthesis_chapters": [], "exec_summary": "", "stage": "synthesize"}
+    return {"stage": "done"}
 
 
 # ---------------------------------------------------------------------------
@@ -1227,16 +1404,26 @@ def understand_router(state: AgentState) -> str:
     if stage in ("clarification_needed", "error", "partial"):
         return END
     if stage == "understand":
-        return "understand"   # gate 1 redirect self-loop
+        return "gate1"   # plan ready, gate 1 review pending
     return "collect"
+
+
+def gate1_router(state: AgentState) -> str:
+    # Gate 1 redirect sets stage="understand" to re-plan; approve sets "collect".
+    return "understand" if state.get("stage") == "understand" else "collect"
 
 
 def synthesize_router(state: AgentState) -> str:
     if state.get("stage") == "partial":
         return "partial_brief"   # soft-timeout stop mid-synthesis → real partial report
     if state.get("stage") == "synthesize":
-        return "synthesize"   # gate 3 redirect self-loop
+        return "gate3"   # brief ready, gate 3 review pending
     return END
+
+
+def gate3_router(state: AgentState) -> str:
+    # Gate 3 redirect sets stage="synthesize" to re-synthesize; approve sets "done".
+    return "synthesize" if state.get("stage") == "synthesize" else END
 
 
 def react_router(state: AgentState) -> str:
@@ -1266,16 +1453,23 @@ def data_review_router(state: AgentState) -> str:
 
 _graph = StateGraph(AgentState)
 _graph.add_node("understand", understand_node)
+_graph.add_node("gate1", gate1_node)
 _graph.add_node("collect", collect_node)
 _graph.add_node("backtrack", backtrack_node)
 _graph.add_node("data_review", data_review_node)
 _graph.add_node("synthesize", synthesize_node)
+_graph.add_node("gate3", gate3_node)
 _graph.add_node("partial_brief", partial_brief_node)
 _graph.set_entry_point("understand")
 _graph.add_conditional_edges(
     "understand",
     understand_router,
-    {"collect": "collect", "understand": "understand", END: END},
+    {"gate1": "gate1", "collect": "collect", END: END},
+)
+_graph.add_conditional_edges(
+    "gate1",
+    gate1_router,
+    {"understand": "understand", "collect": "collect"},
 )
 _graph.add_conditional_edges(
     "collect",
@@ -1292,7 +1486,12 @@ _graph.add_conditional_edges(
 _graph.add_conditional_edges(
     "synthesize",
     synthesize_router,
-    {"synthesize": "synthesize", "partial_brief": "partial_brief", END: END},
+    {"gate3": "gate3", "partial_brief": "partial_brief", END: END},
+)
+_graph.add_conditional_edges(
+    "gate3",
+    gate3_router,
+    {"synthesize": "synthesize", END: END},
 )
 _graph.add_edge("partial_brief", END)
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.commodities_agent import CommoditiesAgent
+from agents import make_domain_agent
 
 
 def _llm_returning(payload: dict) -> MagicMock:
@@ -31,9 +31,9 @@ async def test_repair_adapts_arguments_and_retries():
     with patch("agents.base_domain_agent.LLM"), \
          patch("agents.base_domain_agent.async_route", new=route), \
          patch("agents.base_domain_agent.LLMClient", return_value=_llm_returning(decision)):
-        agent = CommoditiesAgent()
+        agent = make_domain_agent("commodities")
         result, usages, err = await agent._call_tool_with_repair(
-            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "yearly"}
+            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "yearly"}, "c1"
         )
 
     assert err is None
@@ -53,9 +53,9 @@ async def test_repair_aborts_on_unfixable_error():
     with patch("agents.base_domain_agent.LLM"), \
          patch("agents.base_domain_agent.async_route", new=route), \
          patch("agents.base_domain_agent.LLMClient", return_value=_llm_returning(decision)):
-        agent = CommoditiesAgent()
+        agent = make_domain_agent("commodities")
         result, usages, err = await agent._call_tool_with_repair(
-            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "monthly"}
+            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "monthly"}, "c1"
         )
 
     assert result is None
@@ -82,9 +82,9 @@ async def test_repair_caps_total_attempts_at_five():
     with patch("agents.base_domain_agent.LLM"), \
          patch("agents.base_domain_agent.async_route", new=route), \
          patch("agents.base_domain_agent.LLMClient", return_value=llm_client):
-        agent = CommoditiesAgent()
+        agent = make_domain_agent("commodities")
         result, usages, err = await agent._call_tool_with_repair(
-            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "monthly"}
+            "get_mining_metals_prices", {"symbol": "COPPER", "interval": "monthly"}, "c1"
         )
 
     assert result is None
@@ -113,9 +113,9 @@ async def test_repair_skips_loop_on_permanent_error():
     with patch("agents.base_domain_agent.LLM"), \
          patch("agents.base_domain_agent.async_route", new=route), \
          patch("agents.base_domain_agent.LLMClient", return_value=llm_client):
-        agent = CommoditiesAgent()
+        agent = make_domain_agent("commodities")
         result, usages, err = await agent._call_tool_with_repair(
-            "get_macro_indicators", {"series_id": "BADID"}
+            "get_macro_indicators", {"series_id": "BADID"}, "c1"
         )
 
     assert result is None
@@ -129,7 +129,7 @@ async def test_repair_skips_loop_on_permanent_error():
 async def test_fallback_preserves_commodity_figures():
     """A CommodityResult-shaped result lands in figures/text instead of being truncated."""
     with patch("agents.base_domain_agent.LLM"):
-        agent = CommoditiesAgent()
+        agent = make_domain_agent("commodities")
     raw = [{
         "tool": "get_mining_metals_prices",
         "result": {

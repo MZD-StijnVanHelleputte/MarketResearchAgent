@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from typing import Literal
 
+from core.domains import decomposable_domains as _registry_decomposable_domains
+
 # Single source of truth for the Mistral model fallback (used when LLM__MODEL is unset).
 MISTRAL_DEFAULT_MODEL = "mistral-medium-latest"
 
@@ -35,7 +37,7 @@ class LLMSettings(BaseSettings):
     # Per-domain semaphores (synthesis.max_parallel_subdomains) only bound
     # concurrency within one domain; with 7 domains running in parallel that can
     # still mean dozens of simultaneous requests without this global cap.
-    max_concurrent_calls: int = 4
+    max_concurrent_calls: int = 7
 
 
 class ToTSettings(BaseSettings):
@@ -59,7 +61,22 @@ class ReActSettings(BaseSettings):
     run_token_budget: int = 200_000
     # 1 initial attempt + 4 LLM-adapted repair retries = 5 total attempts per tool call
     tool_repair_max_attempts: int = 4
-    max_parallel_tool_calls: int = 3  # concurrency cap for tool-execution loops
+    max_parallel_tool_calls: int = 5  # concurrency cap for tool-execution loops
+    # Ceiling on a single CrewAI synthesis call (crew.kickoff -> litellm -> Mistral).
+    # Without this, a stalled completion call blocks indefinitely; since it's run via
+    # asyncio.to_thread, an unbounded hang here would otherwise tie up a worker thread
+    # forever instead of falling back to plain-text formatting.
+    crew_llm_timeout_s: int = 90
+    # Tool circuit breaker: a tool is blocked for the rest of the run after this many
+    # logical-call failures, or immediately on the first rate-limit (HTTP 429) — a
+    # throttled API key won't recover mid-run, so retrying it just wastes minutes.
+    tool_failure_threshold: int = 5
+    # Stall watchdog: how often to check for inactivity, and how long with zero
+    # tool/LLM/progress activity counts as a stall. The idle threshold sits above the
+    # longest legitimately-silent single call (Tavily /research ~180 s) to avoid false
+    # alarms during a slow-but-healthy call.
+    stall_check_interval_s: int = 60
+    stall_idle_threshold_s: int = 210
 
 
 class RetrievalSettings(BaseSettings):
@@ -121,27 +138,20 @@ class SynthesisSettings(BaseSettings):
     pipeline reverts to the legacy 2-tier flow (one chapter per domain).
     """
     hierarchical_enabled: bool = True
-    # Domains decomposed into per-entity subchapters. macro_geopolitics and
-    # general_search have no fixed master-data entity list, so their
-    # "entities" are LLM-derived themes instead (see core/subdomains.py).
+    # Domains decomposed into per-entity subchapters. Defaults come from the domain
+    # registry (core/domains.py); general_search has no fixed master-data entity
+    # list, so its "entities" are LLM-derived themes instead (see core/subdomains.py).
     decomposable_domains: set[str] = Field(
-        default_factory=lambda: {
-            "competition",
-            "commodities",
-            "distributors",
-            "customers",
-            "mining_projects",
-            "macro_geopolitics",
-            "general_search",
-        }
+        default_factory=lambda: set(_registry_decomposable_domains())
     )
-    max_subdomains_per_domain: int = 6
-    max_parallel_subdomains: int = 3  # concurrent Tier-1 LLM calls within a domain
+    max_subdomains_per_domain: int = 25
+    max_parallel_subdomains: int = 7  # concurrent Tier-1 LLM calls within a domain
+    max_parallel_chapters: int = 4  # concurrent Tier-2 domain-chapter syntheses
     subdomain_min_words: int = 150
     subdomain_max_words: int = 250
     rollup_min_words: int = 250
     rollup_max_words: int = 400
-    # Thematic decomposition (macro_geopolitics, general_search): skip the LLM
+    # Thematic decomposition (general_search): skip the LLM
     # theme-extraction call entirely when the chapter has less evidence than this.
     theme_extraction_min_evidence_words: int = 300
     theme_extraction_max_evidence_chars: int = 6000
@@ -165,13 +175,13 @@ class UnderstandSettings(BaseSettings):
     """Controls the pre-planning research loop and plan-merger step."""
     research_enabled: bool = True
     research_max_tool_calls: int = 10
-    research_timeout_s: int = 45
+    research_timeout_s: int = 300
     # If the consolidated plan still has gap_report entries after merging,
     # retry grounding up to this many extra rounds before presenting the
     # plan at Gate 1. Bounded by round count (not time) since most gaps are
     # structural (no substitute tool exists) and won't close with more
     # attempts; the existing soft timeout still governs overall duration.
-    gap_remediation_max_rounds: int = 1
+    gap_remediation_max_rounds: int = 3
 
 
 class Settings(BaseSettings):
@@ -187,7 +197,7 @@ class Settings(BaseSettings):
     synthesis: SynthesisSettings = Field(default_factory=SynthesisSettings)
     safety: SafetySettings = Field(default_factory=SafetySettings)
     understand: UnderstandSettings = Field(default_factory=UnderstandSettings)
-    max_parallel_subagents: int = 3
+    max_parallel_subagents: int = 5
     cors_allowed_origins: list[str] = Field(
         default=["http://localhost:5000", "http://localhost:5001"]
     )
@@ -224,8 +234,9 @@ class Settings(BaseSettings):
     # are legacy and return HTTP 403 for keys created after 2025-08-31).
     fmp_base_url: str = "https://financialmodelingprep.com"
     fmp_timeout_s: int = 15
-    fmp_max_retries: int = 3
+    fmp_max_retries: int = 1  # fail fast on rate limits so we fall back to yfinance
     fmp_rate_limit_per_min: int = 10
+    fmp_backoff_cap_s: float = 2.0  # cap retry backoff so a 429 doesn't stall the request
 
     # EDGAR client config (sec_edgar_api_key = contact email for User-Agent)
     edgar_base_url: str = "https://efts.sec.gov"

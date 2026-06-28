@@ -1,16 +1,11 @@
 """Assembles final graph state into a ReportDraft for PDF rendering."""
 from pydantic import BaseModel
 
-_DOMAIN_ORDER = [
-    "competition",
-    "distributors",
-    "customers",
-    "mining_projects",
-    "commodities",
-    "macro_geopolitics",
-    "general_search",
-    "supplementary",
-]
+from core.domains import ownership_order
+
+# Chapter order in the report follows domain ownership priority, with a trailing
+# "supplementary" bucket for anything not tied to a domain.
+_DOMAIN_ORDER = [*ownership_order(), "supplementary"]
 
 _DOMAIN_ORDER_INDEX = {d: i for i, d in enumerate(_DOMAIN_ORDER)}
 

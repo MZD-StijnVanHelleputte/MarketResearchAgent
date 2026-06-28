@@ -418,8 +418,11 @@ WEB_EXTRACT_SCHEMA: dict = {
             "type": "object",
             "properties": {
                 "urls": {
-                    "type": "string",
-                    "description": "Comma-separated URLs to extract (up to 20).",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "description": "URLs to extract (up to 20).",
                 },
                 "query": {
                     "type": "string",

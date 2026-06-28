@@ -12,7 +12,8 @@ class CompanyFinancialsTool(BaseTool):
     name = "get_company_financials"
     description = (
         "Get the latest financial summary for a publicly traded company by ticker symbol. "
-        "Returns revenue, net income, capex, market cap, and P/E ratio."
+        "Returns revenue, net income, capex, market cap, and P/E ratio. Sourced from yfinance "
+        "or Financial Modeling Prep depending on configured tier, with automatic fallback."
     )
     input_schema = CompanyFinancialsInput
 

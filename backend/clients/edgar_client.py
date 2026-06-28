@@ -34,7 +34,7 @@ class EdgarClient(BaseHttpClient):
         self,
         query: str,
         forms: str = "10-K,10-Q,8-K",
-        limit: int = 5,
+        limit: int = 25,
     ) -> dict:
         """Full-text search across SEC filings via EDGAR EFTS API.
 

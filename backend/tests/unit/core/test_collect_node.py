@@ -6,7 +6,7 @@ Tests patch core.graph._run_domain_agent to isolate collect_node logic.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.graph import collect_node, data_review_node, AgentState
+from core.graph import collect_node, data_review_node, AgentState, _gate2_dataset_view
 from core.schemas import ChapterDraft
 
 
@@ -16,6 +16,9 @@ def _masterdata_mock() -> MagicMock:
     md.get_commodities.return_value = []
     md.get_distributors.return_value = []
     md.get_operators.return_value = []
+    md.get_construction.return_value = []
+    md.get_others.return_value = []
+    md.resolve_entity.return_value = None
     return md
 
 
@@ -139,6 +142,26 @@ async def test_collect_node_populates_chapter_sets():
     assert draft_dict["text"]
 
 
+def test_gate2_dataset_view_trims_rows_and_large_summary():
+    summary = "x" * 3000
+    dataset = {
+        "kind": "summary",
+        "summary": summary,
+        "rows": [[str(i)] for i in range(10)],
+    }
+
+    view = _gate2_dataset_view(dataset)
+
+    assert view is not dataset
+    assert view["rows"] == dataset["rows"][:5]
+    assert view["rows_truncated"] is True
+    assert len(view["summary"]) < len(summary)
+    assert "Preview truncated for Gate 2" in view["summary"]
+    assert view["summary_truncated"] is True
+    assert dataset["summary"] == summary
+    assert len(dataset["rows"]) == 10
+
+
 @pytest.mark.asyncio
 async def test_collect_node_no_active_domains():
     """A plan with all domains False should produce an error."""
@@ -227,8 +250,11 @@ async def test_data_review_node_groups_by_entity_and_surfaces_failures():
         captured["payload"] = payload
         return "approve"
 
+    store = MagicMock()
+    store.get_preference = AsyncMock(return_value=None)
     with patch("core.graph.interrupt", side_effect=fake_interrupt), \
-         patch("core.graph.MasterDataService", return_value=_masterdata_mock()):
+         patch("core.graph.MasterDataService", return_value=_masterdata_mock()), \
+         patch("core.graph.SqliteStore", return_value=store):
         result = await data_review_node(state)
 
     assert result["stage"] == "synthesize"

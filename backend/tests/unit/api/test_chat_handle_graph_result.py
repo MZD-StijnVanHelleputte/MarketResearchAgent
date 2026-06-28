@@ -7,6 +7,7 @@ error, which the frontend trusted and then 404'd fetching a PDF that was
 never generated. See core/graph.py synthesize_router / api/routers/chat.py.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,13 @@ def _no_pending_interrupt_snapshot():
     snapshot = MagicMock()
     snapshot.next = ()
     return snapshot
+
+
+def _gate_interrupt_snapshot(value: dict):
+    return SimpleNamespace(
+        next=("data_review",),
+        tasks=[SimpleNamespace(interrupts=[SimpleNamespace(value=value)])],
+    )
 
 
 @pytest.mark.asyncio
@@ -77,6 +85,57 @@ async def test_empty_synthesis_recovers_brief_from_chapter_sets(tmp_db):
     assert "Copper demand is rising." in run["brief"]
     assert "Rivals are expanding." in run["brief"]
     assert any("reconstructed" in w.lower() for w in run.get("warnings", []))
+
+
+@pytest.mark.asyncio
+async def test_gate2_interrupt_persists_plans_sources_and_gate_data(tmp_db):
+    plan = {
+        "plan_id": "plan_gate2",
+        "planned_tool_calls": [
+            {
+                "domain": "commodities",
+                "tool": "web_extract",
+                "params": {"urls": ["https://example.com/copper"]},
+            }
+        ],
+    }
+    final = {
+        "stage": "collect",
+        "plans": [plan],
+        "collection_manifest": {
+            "commodities": [
+                {
+                    "domain": "commodities",
+                    "tool": "web_extract",
+                    "title": "Copper source",
+                    "data_type": "data",
+                    "count": 1,
+                    "failed": False,
+                }
+            ]
+        },
+    }
+    gate_data = {
+        "gate": 2,
+        "domains": [
+            {"domain": "commodities", "entities": [], "failed_tools": []}
+        ],
+    }
+
+    with patch(
+        "core.graph.compiled.aget_state",
+        AsyncMock(return_value=_gate_interrupt_snapshot(gate_data)),
+    ):
+        result = await _handle_graph_result(final, "run_gate2", "sess1", "copper outlook")
+
+    assert result is False
+    run = await SqliteStore().get_run("run_gate2")
+    assert run["status"] == "waiting_gate_2"
+    assert run["gate_data"] == gate_data
+    assert run["plans"] == [plan]
+    assert run["sources"] == final["collection_manifest"]["commodities"]
+    assert run["collection_plan"] is not None
+    assert run["collection_plan"]["total"] == 1
 
 
 @pytest.mark.asyncio

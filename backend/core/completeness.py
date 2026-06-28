@@ -31,7 +31,7 @@ def is_gap(item: dict) -> bool:
     generic placeholder text.
 
     Deliberately does NOT treat "no figures/datasets/citations" alone as a gap:
-    thematic domains (general_search, macro_geopolitics) legitimately synthesize
+    thematic domains (general_search) legitimately synthesize
     real prose from retrieved chunks with no structured evidence attached, and
     flagging those would trigger needless remediation churn. `has_evidence` is
     still useful as a *strategy* signal once something is already a known gap

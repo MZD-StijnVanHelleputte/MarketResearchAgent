@@ -158,10 +158,10 @@ def test_build_dataset_owners_picks_higher_priority_domain():
     }
     chapters = [
         {"domain": "mining_projects", "datasets": [dict(shared_ds)]},
-        {"domain": "customers", "datasets": [dict(shared_ds)]},
+        {"domain": "mining_operators", "datasets": [dict(shared_ds)]},
     ]
     owners = _build_dataset_owners(chapters)
-    assert owners["get_equity_history:BHP:5y"] == "customers"
+    assert owners["get_equity_history:BHP:5y"] == "mining_operators"
 
 
 def test_build_dataset_owners_checks_subchapter_datasets_too():

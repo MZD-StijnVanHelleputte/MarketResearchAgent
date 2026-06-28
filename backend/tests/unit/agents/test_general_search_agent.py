@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.general_search_agent import GeneralSearchAgent
+from agents import make_domain_agent
 from core.schemas import ChapterDraft
 
 _DOMAIN = "general_search"
@@ -36,7 +36,7 @@ async def test_returns_chapter_draft():
          patch("agents.base_domain_agent.Task"), \
          patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await GeneralSearchAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.domain == _DOMAIN
     assert any(c.get("url") == "https://example.com" for c in draft.citations)
@@ -50,7 +50,7 @@ async def test_fallback_on_crew_failure():
     with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value={"results": [{"title": "t", "content": "c"}]})), \
          patch("agents.base_domain_agent.Crew", return_value=cm), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await GeneralSearchAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.text
 
@@ -59,5 +59,5 @@ async def test_fallback_on_crew_failure():
 async def test_empty_plan_returns_placeholder():
     plan = {"plan_id": "plan_x", "domain_activations": {}, "tool_calls": []}
     with patch("agents.base_domain_agent.LLM"):
-        draft = await GeneralSearchAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert "No tool calls" in draft.text

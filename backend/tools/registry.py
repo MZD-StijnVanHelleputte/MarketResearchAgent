@@ -1,4 +1,5 @@
 from config import settings as _settings
+from core.domains import domain_keys, domain_tools
 from tools.agricultural_commodity_prices_tool import AgriculturalCommodityPricesTool
 from tools.analyst_estimates_tool import AnalystEstimatesTool
 from tools.balance_sheet_tool import BalanceSheetTool
@@ -168,115 +169,9 @@ def tool_display_name(tool: str) -> str:
 
 
 # Domain → tool name mapping (authoritative reference for domain sub-agents).
-# The actual per-run filter uses plan["tool_calls"][].domain; this is for
-# documentation and stage_tools() filtering.
+# Derived from the domain registry: each domain's tools are the union of the
+# toolsets of every leaf type it may hold (core/domains.LEAF_TOOLSETS). The
+# actual per-run filter uses plan["tool_calls"][].domain via stage_tools().
 DOMAIN_TOOLS: dict[str, list[str]] = {
-    "competition": [
-        "get_company_financials",
-        "search_sec_filings",
-        "get_equity_price",
-        "get_equity_history",
-        "get_equity_financials",
-        "news_search",
-        "news_top_headlines",
-        "get_earnings_calendar",
-        "get_news_sentiment",
-        "get_earnings_transcript",
-        "get_insider_transactions",
-        "web_extract",
-        "web_crawl",
-        "web_map",
-        "get_income_statement",
-        "get_balance_sheet",
-        "get_cash_flow",
-        "get_financial_ratios",
-        "get_analyst_estimates",
-        "get_stock_peers",
-        "get_company_rating",
-        "get_earnings_surprises",
-        "get_press_releases",
-        "screen_stocks",
-    ],
-    "distributors": ["masterdata_lookup", "news_search", "news_top_headlines", "web_search"],
-    "customers": [
-        "masterdata_lookup",
-        "get_company_financials",
-        "get_equity_price",
-        "get_equity_history",
-        "get_equity_financials",
-        "news_search",
-        "news_top_headlines",
-        "web_search",
-        "get_energy_cost_prices",
-        "get_broad_commodity_cycle",
-        "get_fx_rates",
-        "get_income_statement",
-        "get_balance_sheet",
-        "get_cash_flow",
-        "get_financial_ratios",
-        "get_analyst_estimates",
-        "get_company_rating",
-        "get_press_releases",
-        "get_mine_technical_report",
-    ],
-    "mining_projects": [
-        "search_sec_filings",
-        "get_mine_technical_report",
-        "get_equity_price",
-        "get_equity_history",
-        "get_equity_financials",
-        "news_search",
-        "news_top_headlines",
-        "web_search",
-        "get_mining_metals_prices",
-        "get_energy_cost_prices",
-        "get_news_sentiment",
-        "get_insider_transactions",
-        "web_extract",
-        "web_crawl",
-        "web_map",
-        "web_research",
-        "get_income_statement",
-        "get_cash_flow",
-        "get_press_releases",
-        "get_earnings_surprises",
-        "screen_stocks",
-    ],
-    "commodities": [
-        "get_mining_metals_prices",
-        "get_energy_cost_prices",
-        "get_broad_commodity_cycle",
-        "get_agricultural_commodity_prices",
-    ],
-    "macro_geopolitics": [
-        "get_macro_indicator",
-        "search_fred_series",
-        "get_fred_observations",
-        "list_fred_releases",
-        "get_fred_release_series",
-        "browse_fred_category",
-        "get_fred_series_by_tags",
-        "get_fred_series_updates",
-        "news_search",
-        "news_top_headlines",
-        "web_search",
-        "get_agricultural_commodity_prices",
-        "get_fx_rates",
-        "web_research",
-        # Demand-side consumer companies (BYD, VW, …) are routed here — their
-        # equity/financials are collected as the demand-side angle on commodities.
-        "get_company_financials",
-        "get_equity_price",
-        "get_equity_history",
-        "get_equity_financials",
-    ],
-    "general_search": [
-        "web_search",
-        "news_top_headlines",
-        "news_sources",
-        "get_news_sentiment",
-        "web_extract",
-        "web_map",
-        "web_research",
-    ],
+    domain: domain_tools(domain) for domain in domain_keys()
 }

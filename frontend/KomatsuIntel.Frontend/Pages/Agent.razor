@@ -2,6 +2,7 @@
 @inject ApiClient Api
 @inject IJSRuntime JS
 @inject ISnackbar Snackbar
+@inject ILogger<Agent> Logger
 @using System.Text
 @using System.Text.Json
 
@@ -31,6 +32,17 @@
                         </MudText>
                     </MudStack>
                 }
+            </MudStack>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.FlexEnd" Class="mt-2">
+                <MudSwitch T="bool"
+                           Value="@_autoApprove"
+                           ValueChanged="@OnAutoApproveChanged"
+                           Color="Color.Primary">
+                    Auto-approve gates
+                </MudSwitch>
+                <MudTooltip Text="Skip manual review at every checkpoint and let the agent proceed automatically.">
+                    <MudIcon Icon="@Icons.Material.Outlined.Info" Style="font-size:1rem;color:#9CA3AF;" />
+                </MudTooltip>
             </MudStack>
         </MudPaper>
 
@@ -192,7 +204,7 @@
                               AutoGrow="true"
                               MaxLines="4"
                               Immediate="true"
-                              Disabled="@(_loading || _awaitingGate is not null || _awaitingTimeoutConfirm)"
+                              Disabled="@(_loading || _awaitingGate is not null || _awaitingTimeoutConfirm || _awaitingStallConfirm)"
                               Style="flex:1;"
                               Adornment="Adornment.None"
                               OnKeyDown="@HandleKeyDown" />
@@ -200,7 +212,7 @@
                            Color="Color.Primary"
                            EndIcon="@Icons.Material.Filled.Send"
                            OnClick="@Submit"
-                           Disabled="@(string.IsNullOrWhiteSpace(_query) || _loading || _awaitingGate is not null || _awaitingTimeoutConfirm)"
+                           Disabled="@(string.IsNullOrWhiteSpace(_query) || _loading || _awaitingGate is not null || _awaitingTimeoutConfirm || _awaitingStallConfirm)"
                            Style="min-width:100px;height:56px;">
                     Run
                 </MudButton>
@@ -232,14 +244,40 @@
                 </MudStack>
             </MudPaper>
         }
+        else if (_awaitingStallConfirm)
+        {
+            <MudPaper Elevation="2" Class="pa-4 ma-2">
+                <MudAlert Severity="Severity.Warning" Class="mb-3">
+                    @_stallMessage
+                </MudAlert>
+                <MudStack Row="true" Spacing="2" Justify="Justify.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               OnClick="OnStallContinue">Keep Waiting</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                               OnClick="OnStallFinalize">Finalize &amp; Continue</MudButton>
+                </MudStack>
+            </MudPaper>
+        }
         else if (_awaitingGate == 1 && _consolidatedPlan is not null)
         {
             <PlanReview Data="@_consolidatedPlan"
                         OnApprove="@ApproveGate1"
                         OnRedirect="@RedirectGate1" />
         }
+        else if (_awaitingGate == 2 && _collectionPlan is not null)
+        {
+            @* Gate 2 reuses the completed collection-plan tree, with the accept /
+               re-collect prompt pinned at the top. *@
+            <CollectionPlan Plan="@_collectionPlan"
+                            ShowApprove="true"
+                            OnApprove="@ApproveGate2"
+                            OnRedirect="@(() => RedirectGate2(string.Empty))" />
+        }
         else if (_awaitingGate == 2 && _gatheredData is not null)
         {
+            @* Compatibility fallback for paused runs created before plans were
+               persisted at Gate 2, where the completed collection tree cannot be
+               reconstructed but the gathered-data review payload is available. *@
             <GatheredData Data="@_gatheredData"
                           OnApprove="@ApproveGate2"
                           OnRedirect="@RedirectGate2" />
@@ -250,9 +288,15 @@
                          OnApprove="@ApproveGate3"
                          RunId="@(_runId ?? string.Empty)" />
         }
+        else if (_collectionPlan is not null && !_runComplete)
+        {
+            @* Live collection plan during the collection phase (replaces the
+               flat sources list). *@
+            <CollectionPlan Plan="@_collectionPlan" />
+        }
         else
         {
-            @* Sources panel — always visible when no gate is active *@
+            @* Sources panel — completion state (PDF/archive) and pre-plan placeholder *@
             <MudPaper Elevation="1" Class="pa-3">
 
                 @* Header: title + count badge + download buttons *@
@@ -338,10 +382,18 @@
                     <MudStack Spacing="1" Class="mb-2">
                         @if (_currentStage == 1 && _toolCallsTotal is > 0)
                         {
-                            <MudProgressLinear Value="@(100.0 * (_toolCallsCompleted ?? 0) / _toolCallsTotal!.Value)"
-                                               Color="Color.Primary" Rounded="true" Size="Size.Small" />
+                            var total     = _toolCallsTotal!.Value;
+                            var succeeded = _toolCallsSucceeded ?? 0;
+                            var failed    = _toolCallsFailed ?? 0;
+                            var todo      = Math.Max(0, total - succeeded - failed);
+                            var pctOk     = 100.0 * succeeded / total;
+                            var pctFail   = 100.0 * failed / total;
+                            <div style="display:flex;width:100%;height:4px;border-radius:4px;overflow:hidden;background:#E5E7EB;">
+                                <div style="width:@(pctOk)%;background:#2E7D32;transition:width .3s;"></div>
+                                <div style="width:@(pctFail)%;background:#C62828;transition:width .3s;"></div>
+                            </div>
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                @(_toolCallsCompleted ?? 0) / @_toolCallsTotal sources collected
+                                ✓ @succeeded succeeded · ✗ @failed failed · ⏳ @todo to-do (@(succeeded + failed)/@total)
                             </MudText>
                             @if (!string.IsNullOrWhiteSpace(_currentToolLabel))
                             {
@@ -448,16 +500,21 @@
     private bool    _agentTyping;
     private string  _statusMessage = string.Empty;
 
+    private bool _autoApprove;
+
     private int  _currentStage = 0;
     private int? _awaitingGate;
     private bool _awaitingTimeoutConfirm;
     private string _timeoutMessage = string.Empty;
+    private bool _awaitingStallConfirm;
+    private string _stallMessage = string.Empty;
     private bool _runComplete;
     private bool _episodicSaving;
     private bool _episodicSaved;
 
     private ConsolidatedPlanData?  _consolidatedPlan;
     private GatheredDataView? _gatheredData;
+    private CollectionPlanView?    _collectionPlan;
     private BriefReviewData?       _briefReview;
 
     private readonly List<ChatMessage> _messages         = new();
@@ -470,6 +527,8 @@
     private string? _currentThought;
     private int?    _toolCallsTotal;
     private int?    _toolCallsCompleted;
+    private int?    _toolCallsSucceeded;
+    private int?    _toolCallsFailed;
     private string? _currentToolLabel;
     private bool    _summaryShown;
     private string? _pdfWarning;
@@ -523,6 +582,34 @@
     {
         if (e.Key == "Enter" && !e.ShiftKey)
             await Submit();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var resp = await Api.GetPreferencesAsync();
+            if (resp?.Preferences is not null && resp.Preferences.TryGetValue("auto_approve_gates", out var raw))
+            {
+                _autoApprove = raw is JsonElement elem
+                    ? elem.ValueKind == JsonValueKind.True
+                    : Convert.ToBoolean(raw);
+            }
+        }
+        catch { /* leave switch off if preferences fail to load */ }
+    }
+
+    private async Task OnAutoApproveChanged(bool value)
+    {
+        _autoApprove = value;
+        try
+        {
+            await Api.UpdatePreferencesAsync(new { auto_approve_gates = value });
+        }
+        catch
+        {
+            Snackbar.Add("Failed to save auto-approve preference.", Severity.Warning);
+        }
     }
 
     private void AddMessage(string role, string content, string? meta = null) =>
@@ -680,6 +767,7 @@
         _episodicSaved      = false;
         _awaitingGate           = null;
         _awaitingTimeoutConfirm = false;
+        _awaitingStallConfirm   = false;
         _consolidatedPlan       = null;
         _currentStage           = 0;
         _seenActivityCount  = 0;
@@ -784,13 +872,22 @@
                 run = await Api.GetRunAsync(_runId!, ct);
             }
             catch (OperationCanceledException) { throw; }
-            catch { continue; /* transient — retry */ }
+            catch (Exception ex)
+            {
+                // Transient — retry, but log it so a *persistent* failure (e.g. a
+                // gate payload too large/slow for this poll to fetch and parse)
+                // is visible in the console instead of looking like a silent stall.
+                Logger.LogWarning(ex, "Run status poll failed for {RunId}; retrying", _runId);
+                continue;
+            }
 
             if (run is null) continue;
 
             _statusMessage = run.StatusMessage ?? $"Stage: {run.Stage}…";
             _toolCallsTotal     = run.ToolCallsTotal;
             _toolCallsCompleted = run.ToolCallsCompleted;
+            _toolCallsSucceeded = run.ToolCallsSucceeded;
+            _toolCallsFailed    = run.ToolCallsFailed;
             _currentToolLabel   = run.CurrentToolLabel;
             _currentStage = run.Stage switch
             {
@@ -846,6 +943,10 @@
                 _seenSourcesCount = run.Sources.Count;
                 await ScrollToBottom();
             }
+
+            // Live collection-plan tree (built once the consolidated plan exists),
+            // shown in the right panel during collection and reused at Gate 2.
+            _collectionPlan = run.CollectionPlan;
 
             StateHasChanged();
 
@@ -922,6 +1023,20 @@
                 _statusMessage           = "Agent paused — awaiting your decision…";
                 StateHasChanged();
                 return;  // halt polling — timeout confirm handlers restart it
+            }
+
+            if (run.Status == "waiting_stall_confirm")
+            {
+                _agentTyping          = false;
+                _loading              = false;
+                _currentThought       = null;
+                _awaitingStallConfirm = true;
+                _stallMessage         = run.GateData.HasValue
+                    ? (run.GateData.Value.GetProperty("message").GetString() ?? "The agent appears to be idle.")
+                    : "The agent appears to be idle.";
+                _statusMessage        = "Agent idle — awaiting your decision…";
+                StateHasChanged();
+                return;  // halt polling — stall confirm handlers restart it
             }
 
             if (run.Status == "done")
@@ -1045,6 +1160,32 @@
         _statusMessage          = "Assembling partial report…";
         StateHasChanged();
         await Api.StopAfterTimeoutAsync(_runId!);
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    // ── Stall confirmation handlers ───────────────────────────────────────
+
+    private async Task OnStallContinue()
+    {
+        _awaitingStallConfirm = false;
+        _agentTyping          = true;
+        _loading              = true;
+        _currentThought       = null;
+        _statusMessage        = "Keeping the agent running…";
+        StateHasChanged();
+        await Api.ContinueAfterStallAsync(_runId!);
+        await PollUntilComplete(_pollCts!.Token);
+    }
+
+    private async Task OnStallFinalize()
+    {
+        _awaitingStallConfirm = false;
+        _agentTyping          = true;
+        _loading              = true;
+        _currentThought       = null;
+        _statusMessage        = "Finalizing this phase…";
+        StateHasChanged();
+        await Api.FinalizeAfterStallAsync(_runId!);
         await PollUntilComplete(_pollCts!.Token);
     }
 

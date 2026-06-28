@@ -13,6 +13,7 @@ Dependency rules:
 """
 import asyncio
 import concurrent.futures
+import datetime as dt
 import json
 import logging
 import re
@@ -23,9 +24,10 @@ from pydantic import ValidationError
 
 import models.crewai_patches  # noqa: F401 — must run before any Agent/Crew/Task is built
 from config import settings
-from core.event_logger import log_event, set_run_context
+from core.event_logger import get_run_context, log_event, set_run_context
 from core.friendly_names import friendly_domain, friendly_tool
 from core.schemas import ChapterDraft
+from core import tool_circuit_breaker as breaker
 from core.tool_router import async_route, is_permanent_tool_error
 from models.json_repair import extract_json_field
 from models.llm_client import LLMClient
@@ -40,6 +42,13 @@ logger = logging.getLogger(__name__)
 # these get an extra discovery-based recovery step on a permanent "series does
 # not exist" error (see _resolve_fred_series_id) instead of failing fast.
 _FRED_ID_TOOLS = {"get_macro_indicator", "get_fred_observations"}
+
+# Quality gate for FRED discovery: a recovered series must be popular enough to be
+# plausibly relevant (search by a vague term otherwise surfaces obscure off-topic
+# series, e.g. "tariff" → "Coffee Imports") and still actively updated. Below the bar
+# we return None and let the agent fall back to web search.
+_FRED_MIN_POPULARITY = 20
+_FRED_MAX_STALENESS_DAYS = 730
 
 # Argument keys, in priority order, that best identify *what* a tool call is
 # fetching (e.g. "CAT" for a ticker lookup) — used to make live progress
@@ -72,9 +81,10 @@ def _load_json(raw: str) -> dict | None:
 
 
 class BaseDomainAgent(ABC):
-    """Base class for all 7 domain collection sub-agents.
+    """Base class for the domain collection agent.
 
-    Subclasses define DOMAIN, ROLE, GOAL, BACKSTORY as class-level strings.
+    DOMAIN, ROLE, GOAL, BACKSTORY are supplied per instance by the config-driven
+    DomainAgent (agents/__init__.py) from the domain registry (core/domains.py).
     The run() method is the only public interface.
     """
 
@@ -89,6 +99,7 @@ class BaseDomainAgent(ABC):
             model=f"mistral/{settings.llm.model}",
             api_key=api_key,
             temperature=settings.llm.work_temperature,
+            timeout=settings.react.crew_llm_timeout_s,
         )
 
     async def run(self, plan: dict, run_id: str) -> ChapterDraft:
@@ -123,7 +134,7 @@ class BaseDomainAgent(ABC):
         # the run's api_call_count.
         sem = asyncio.Semaphore(settings.react.max_parallel_tool_calls)
 
-        async def _run_one(tc: dict) -> tuple[str, dict | None, list[dict], str | None]:
+        async def _run_one(idx: int, tc: dict) -> tuple[str, dict | None, list[dict], str | None]:
             tool_name = tc.get("tool", "")
             # PlannedToolCall uses "params"; CandidatePlan tool_calls use "arguments".
             arguments = tc.get("params") or tc.get("arguments") or {}
@@ -133,11 +144,18 @@ class BaseDomainAgent(ABC):
                 "progress",
                 f"Fetching {friendly_tool(tool_name)}{suffix} for {friendly_domain(self.DOMAIN)}…",
             )
+            # Stable id for this *logical* planned call, shared by every retry attempt,
+            # so progress tracking can count it once instead of once per attempt.
+            call_id = f"{plan_id}:{self.DOMAIN}:{idx}"
             async with sem:
-                result, usages, error = await self._call_tool_with_repair(tool_name, arguments)
+                result, usages, error = await self._call_tool_with_repair(
+                    tool_name, arguments, call_id
+                )
             return tool_name, result, usages, error
 
-        outcomes = await asyncio.gather(*(_run_one(tc) for tc in domain_calls))
+        outcomes = await asyncio.gather(
+            *(_run_one(idx, tc) for idx, tc in enumerate(domain_calls))
+        )
 
         raw_results: list[dict] = []
         tool_errors: list[str] = []
@@ -163,7 +181,7 @@ class BaseDomainAgent(ABC):
 
         # Synthesise raw results via CrewAI; fall back to plain-text formatting
         try:
-            draft = self._run_crew(plan_id, raw_results)
+            draft = await asyncio.to_thread(self._run_crew, plan_id, raw_results)
         except Exception as exc:
             logger.warning(
                 "domain_agent %s: CrewAI failed (%s), using fallback", self.DOMAIN, exc
@@ -183,17 +201,28 @@ class BaseDomainAgent(ABC):
         return draft
 
     async def _call_tool_with_repair(
-        self, tool_name: str, arguments: dict
+        self, tool_name: str, arguments: dict, call_id: str
     ) -> tuple[dict | None, list[dict], str | None]:
         """Attempt a tool call; on failure, use an LLM to interpret the error and adapt
         the arguments, retrying up to settings.react.tool_repair_max_attempts times.
 
         Returns (result_or_None, repair_usage_dicts, last_error_string).
+
+        Tool failures are counted into the circuit breaker once per *logical* call
+        (not once per repair sub-attempt): every async_route here passes
+        count_failures=False, and this method records exactly one success/failure
+        outcome to the breaker when the call resolves. So a tool blocks after 5
+        failing logical calls (or one rate-limit), not after one call's 5 retries.
         """
+        run_id = get_run_context().get("run_id")
         repair_usages: list[dict] = []
+        last_exc: BaseException | None = None
         try:
-            return await async_route(tool_name, arguments), repair_usages, None
+            result = await async_route(tool_name, arguments, call_id, count_failures=False)
+            breaker.record_success(run_id, tool_name)
+            return result, repair_usages, None
         except Exception as exc:
+            last_exc = exc
             last_error = str(exc)
             # A permanent client error (e.g. FRED 400 "the series does not exist") can
             # never be fixed by retrying with adapted arguments — skip the LLM repair
@@ -205,16 +234,30 @@ class BaseDomainAgent(ABC):
                     if resolved_id and resolved_id != series_id:
                         new_args = {**arguments, "series_id": resolved_id}
                         try:
-                            result = await async_route(tool_name, new_args)
+                            result = await async_route(
+                                tool_name, new_args, call_id, count_failures=False
+                            )
                             await log_event(
                                 "progress",
                                 f"Resolved FRED series '{series_id}' → "
                                 f"'{resolved_id}' via discovery.",
                                 detail={"original": series_id, "resolved": resolved_id},
                             )
+                            breaker.record_success(run_id, tool_name)
                             return result, repair_usages, None
                         except Exception as exc2:
+                            last_exc = exc2
                             last_error = str(exc2)
+                    else:
+                        # FRED has no good series for this concept — signal the agent to
+                        # collect it from web search instead of retrying FRED.
+                        await log_event(
+                            "progress",
+                            f"No FRED series matches '{series_id}' — use web search for this.",
+                            detail={"series_id": series_id},
+                        )
+                await self._record_breaker_failure(run_id, tool_name, last_exc, call_id)
+                await self._log_tool_failed_final(tool_name, call_id, last_error)
                 return None, repair_usages, last_error
 
         current_args = dict(arguments)
@@ -235,17 +278,51 @@ class BaseDomainAgent(ABC):
                 break
             current_args = new_args
             try:
-                result = await async_route(tool_name, current_args)
+                result = await async_route(
+                    tool_name, current_args, call_id, count_failures=False
+                )
                 await log_event(
                     "progress",
                     f"Retry succeeded for {friendly}.",
                     detail={"args": current_args, "reason": decision.get("reason", "")},
                 )
+                breaker.record_success(run_id, tool_name)
                 return result, repair_usages, None
             except Exception as exc:
+                last_exc = exc
                 last_error = str(exc)
 
+        await self._record_breaker_failure(run_id, tool_name, last_exc, call_id)
+        await self._log_tool_failed_final(tool_name, call_id, last_error)
         return None, repair_usages, last_error
+
+    @staticmethod
+    async def _record_breaker_failure(
+        run_id: str | None, tool_name: str, exc: BaseException | None, call_id: str
+    ) -> None:
+        """Record one logical-call failure into the circuit breaker; emit a one-time
+        event when the tool crosses the threshold and becomes blocked for the run."""
+        if breaker.record_failure(run_id, tool_name, exc):
+            await log_event(
+                "tool_blocked", f"{friendly_tool(tool_name)} blocked (circuit breaker)",
+                detail={
+                    "tool": tool_name,
+                    "reason": breaker.block_reason(run_id, tool_name),
+                    "call_id": call_id,
+                },
+                level="warning",
+            )
+
+    @staticmethod
+    async def _log_tool_failed_final(tool_name: str, call_id: str, last_error: str) -> None:
+        """One definitive failure marker per logical call, logged once retries (or
+        repair) are exhausted — independent of how many transient tool_error events
+        preceded it, so progress tracking can count this call exactly once."""
+        await log_event(
+            "tool_failed_final", f"{friendly_tool(tool_name)} failed permanently",
+            detail={"call_id": call_id, "tool": tool_name, "error": last_error},
+            level="error",
+        )
 
     async def _repair_decision(
         self, tool_name: str, arguments: dict, error: str
@@ -266,36 +343,62 @@ class BaseDomainAgent(ABC):
         return _load_json(response.content or ""), llm_usage(response.usage)
 
     @staticmethod
+    def _pick_best_fred_candidate(candidates: list[dict]) -> str | None:
+        """Choose the most useful series from FRED discovery results: drop discontinued
+        series (no recent observations) and low-relevance hits, then prefer the most
+        popular. Returns None when nothing clears the bar — better to fall back to web
+        search than to return an off-topic series (e.g. 'tariff' → 'Coffee Imports')."""
+        cutoff = (dt.date.today() - dt.timedelta(days=_FRED_MAX_STALENESS_DAYS)).isoformat()
+        viable = []
+        for c in candidates:
+            if not c.get("series_id"):
+                continue
+            if int(c.get("popularity") or 0) < _FRED_MIN_POPULARITY:
+                continue
+            end = c.get("observation_end") or ""
+            if end and end < cutoff:
+                continue
+            viable.append(c)
+        if not viable:
+            return None
+        best = max(viable, key=lambda c: int(c.get("popularity") or 0))
+        return best.get("series_id")
+
+    @staticmethod
     async def _resolve_fred_series_id(series_id: str) -> str | None:
         """Recover a real FRED series_id when the planner guessed one that doesn't
         exist, by querying FRED's own discovery endpoints: series/search first
         (free-text, https://fred.stlouisfed.org/docs/api/fred/series_search.html),
         falling back to tags/series (https://fred.stlouisfed.org/docs/api/fred/tags_series.html)
-        if the search comes up empty. Returns None if neither finds a match."""
+        if the search comes up empty. Each result set is filtered to a popular, recently
+        updated series; returns None (→ web-search fallback) if neither finds a good match."""
         tokens = [t for t in re.split(r"[_\-]+", series_id) if t]
         query = " ".join(tokens) or series_id
 
         try:
             search_result = await async_route(
-                "search_fred_series", {"search_text": query, "limit": 5}
+                "search_fred_series", {"search_text": query, "limit": 10}
             )
         except Exception:
             search_result = None
-        candidates = (search_result or {}).get("results") or []
-        if candidates:
-            return candidates[0].get("series_id")
+        best = BaseDomainAgent._pick_best_fred_candidate(
+            (search_result or {}).get("results") or []
+        )
+        if best:
+            return best
 
         tag_names = ";".join(t.lower() for t in tokens if len(t) > 2)
         if not tag_names:
             return None
         try:
             tags_result = await async_route(
-                "get_fred_series_by_tags", {"tag_names": tag_names, "limit": 5}
+                "get_fred_series_by_tags", {"tag_names": tag_names, "limit": 10}
             )
         except Exception:
             return None
-        candidates = (tags_result or {}).get("results") or []
-        return candidates[0].get("series_id") if candidates else None
+        return BaseDomainAgent._pick_best_fred_candidate(
+            (tags_result or {}).get("results") or []
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -330,7 +433,9 @@ class BaseDomainAgent(ABC):
         def _run_crew() -> object:
             with crew_semaphore:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    return pool.submit(crew.kickoff).result()
+                    return pool.submit(crew.kickoff).result(
+                        timeout=settings.react.crew_llm_timeout_s
+                    )
 
         result = call_with_backoff(_run_crew)
         draft = self._parse_result(str(result), plan_id)

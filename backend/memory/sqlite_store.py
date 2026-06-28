@@ -59,21 +59,9 @@ def _now() -> str:
 _COLLECT_ITERATION_START_LABEL = "Collecting intelligence from data sources…"
 
 
-def _compute_collect_progress(events: list[dict], current_stage: str | None) -> dict:
-    """Derive live collection-progress fields from the run's step_events, so the
-    frontend can show a determinate completion bar instead of a spinner.
-
-    tool_calls_total comes from each domain agent's one-time "domain_filter" event
-    (detail["matched"] = calls assigned to that domain); tool_calls_completed counts
-    "tool_call"/"tool_error" events. A retried call logs an extra "tool_error" before
-    its eventual "tool_call", so completed can briefly exceed total — an accepted,
-    cosmetic overcount, not worth suppressing.
-
-    ReAct backtracking can re-invoke collect_node within the same run, re-logging
-    domain_filter/tool_call/tool_error from scratch each time — without scoping to
-    the latest collect_node entry, sums would accumulate across iterations and
-    produce a meaningless (and sometimes completed > total) ratio.
-    """
+def _scope_to_latest_collect(events: list[dict]) -> list[dict]:
+    """Drop events before the most recent collect_node entry, so ReAct backtrack
+    re-runs don't double-count (each re-entry re-logs domain_filter/tool_call)."""
     boundary = 0
     for e in events:
         if (
@@ -82,10 +70,51 @@ def _compute_collect_progress(events: list[dict], current_stage: str | None) -> 
             and e.get("label") == _COLLECT_ITERATION_START_LABEL
         ):
             boundary = e.get("id", boundary)
-    events = [e for e in events if e.get("id", 0) >= boundary]
+    return [e for e in events if e.get("id", 0) >= boundary]
+
+
+def _call_status_map(events: list[dict]) -> dict[str, tuple[str, str]]:
+    """Map each logical tool call_id to its final (status, reason) from step_events.
+
+    status is "success" or "failed"; reason is the error string for failures (""
+    otherwise). A "tool_call" event marks a call_id succeeded, "tool_failed_final"
+    marks it failed; transient mid-retry "tool_error" events are ignored. The first
+    write for a given call_id wins (the FRED-resolution path is the only case where
+    both could appear, and it never logs both for the same id).
+    """
+    status: dict[str, tuple[str, str]] = {}
+    for e in events:
+        event_type = e.get("event_type")
+        if event_type not in ("tool_call", "tool_failed_final") or e.get("stage") != "collect":
+            continue
+        try:
+            detail = json.loads(e["detail"]) if e.get("detail") else {}
+        except (json.JSONDecodeError, TypeError):
+            detail = {}
+        call_id = detail.get("call_id")
+        if not call_id or call_id in status:
+            continue
+        if event_type == "tool_call":
+            status[call_id] = ("success", "")
+        else:
+            status[call_id] = ("failed", str(detail.get("error") or ""))
+    return status
+
+
+def _compute_collect_progress(events: list[dict], current_stage: str | None) -> dict:
+    """Derive live collection-progress fields from the run's step_events, so the
+    frontend can show a determinate completion bar instead of a spinner.
+
+    tool_calls_total comes from each domain agent's one-time "domain_filter" event
+    (detail["matched"] = calls assigned to that domain). Completion is tracked per
+    logical call via detail["call_id"] (stable across all of a call's retry
+    attempts) — see _call_status_map. Transient "tool_error" events from mid-retry
+    attempts are not counted, so a call that fails twice then succeeds is still only
+    counted once — completed can never exceed total.
+    """
+    events = _scope_to_latest_collect(events)
 
     total = 0
-    completed = 0
     current_label: str | None = None
     current_domain: str | None = None
     for e in events:
@@ -96,8 +125,6 @@ def _compute_collect_progress(events: list[dict], current_stage: str | None) -> 
             except (json.JSONDecodeError, TypeError):
                 detail = {}
             total += detail.get("matched") or 0
-        elif event_type in ("tool_call", "tool_error") and e.get("stage") == "collect":
-            completed += 1
         if (
             event_type == "progress"
             and e.get("stage") == "collect"
@@ -106,6 +133,11 @@ def _compute_collect_progress(events: list[dict], current_stage: str | None) -> 
             current_label = e.get("label")
             current_domain = e.get("domain") or None
 
+    call_status = _call_status_map(events)
+    completed = len(call_status)
+    failed = sum(1 for st, _ in call_status.values() if st == "failed")
+    succeeded = completed - failed
+
     if current_stage != "collect" or (total > 0 and completed >= total):
         current_label = None
         current_domain = None
@@ -113,9 +145,136 @@ def _compute_collect_progress(events: list[dict], current_stage: str | None) -> 
     return {
         "tool_calls_total": total,
         "tool_calls_completed": completed,
+        "tool_calls_succeeded": succeeded,
+        "tool_calls_failed": failed,
         "current_tool_label": current_label,
         "current_domain": current_domain,
     }
+
+
+def _leaf_for_call(call: dict, leaves: list[dict]) -> dict | None:
+    """Best-effort attribution of a planned tool call to one of its domain's leaves.
+
+    Priority: (1) a ticker/symbol param equal to the leaf's params, then (2) a leaf
+    label appearing in any string param (e.g. a search query). Returns None when no
+    leaf claims the call (it lands in the domain's "General" bucket)."""
+    params = call.get("params") or {}
+    call_tickers = {
+        str(params[k]).strip().lower()
+        for k in ("ticker", "symbol")
+        if params.get(k)
+    }
+    if call_tickers:
+        for leaf in leaves:
+            lp = leaf.get("params") or {}
+            leaf_vals = {
+                str(lp[k]).strip().lower() for k in ("ticker", "symbol") if lp.get(k)
+            }
+            if leaf_vals & call_tickers:
+                return leaf
+    # Fall back to a leaf label mentioned in any free-text param.
+    blob = " ".join(str(v) for v in params.values()).lower()
+    if blob:
+        for leaf in leaves:
+            label = str(leaf.get("label") or "").strip().lower()
+            if len(label) >= 3 and label in blob:
+                return leaf
+    return None
+
+
+def build_collection_plan(plan: dict | None, events: list[dict]) -> dict | None:
+    """Annotate the consolidated plan's tool calls with live execution status, as a
+    tree the frontend renders directly: plan → domains → leaves → tool calls.
+
+    Each planned tool call is grouped under the leaf it serves (see _leaf_for_call)
+    and labelled pending/succeeded/failed by matching its reconstructed call_id
+    (f"{plan_id}:{domain}:{idx}", idx = position within the domain-filtered calls,
+    exactly as base_domain_agent enumerates them) against the run's step_events.
+    Returns None when there is no plan with tool calls to show.
+    """
+    if not isinstance(plan, dict):
+        return None
+    calls = plan.get("planned_tool_calls") or []
+    if not calls:
+        return None
+
+    from core.domains import display_name, ownership_order
+    from tools.registry import tool_display_name
+
+    plan_id = plan.get("plan_id", "")
+    leaves_all = plan.get("leaves") or []
+    status_map = _call_status_map(_scope_to_latest_collect(events))
+
+    def _empty() -> dict:
+        return {"total": 0, "succeeded": 0, "failed": 0, "pending": 0}
+
+    def _bump(counter: dict, status: str) -> None:
+        counter["total"] += 1
+        counter[status] += 1
+
+    # Group calls by domain in plan order; the index within a domain's list is the
+    # same idx base_domain_agent uses to build call_id.
+    by_domain: dict[str, list[dict]] = {}
+    for call in calls:
+        domain = call.get("domain") or "general_search"
+        by_domain.setdefault(domain, []).append(call)
+
+    # Order domains by ownership priority, with any unknown domains trailing.
+    order = ownership_order()
+    domain_keys = sorted(
+        by_domain, key=lambda d: order.index(d) if d in order else len(order)
+    )
+
+    plan_counts = _empty()
+    domain_nodes: list[dict] = []
+    for domain in domain_keys:
+        leaves_in_domain = [lf for lf in leaves_all if lf.get("domain") == domain]
+        # Preserve leaf order from the plan; "General" holds unattributable calls.
+        leaf_nodes: dict[str, dict] = {}
+        leaf_order: list[str] = []
+
+        def _leaf_node(key: str, label: str, leaf_type: str) -> dict:
+            if key not in leaf_nodes:
+                leaf_nodes[key] = {
+                    "key": key, "label": label, "leaf_type": leaf_type,
+                    "tool_calls": [], **_empty(),
+                }
+                leaf_order.append(key)
+            return leaf_nodes[key]
+
+        domain_counts = _empty()
+        for idx, call in enumerate(by_domain[domain]):
+            call_id = f"{plan_id}:{domain}:{idx}"
+            st, reason = status_map.get(call_id, ("pending", ""))
+            status = "succeeded" if st == "success" else st  # "success"→"succeeded"
+            leaf = _leaf_for_call(call, leaves_in_domain)
+            if leaf is not None:
+                node = _leaf_node(
+                    leaf.get("key") or leaf.get("label") or "?",
+                    leaf.get("label") or leaf.get("key") or "?",
+                    leaf.get("leaf_type") or "",
+                )
+            else:
+                node = _leaf_node("__general__", "General", "")
+            tool = call.get("tool", "")
+            node["tool_calls"].append({
+                "tool": tool,
+                "display": tool_display_name(tool),
+                "status": status,
+                "reason": reason or None,
+            })
+            _bump(node, status)
+            _bump(domain_counts, status)
+            _bump(plan_counts, status)
+
+        domain_nodes.append({
+            "domain": domain,
+            "display": display_name(domain),
+            "leaves": [leaf_nodes[k] for k in leaf_order],
+            **domain_counts,
+        })
+
+    return {**plan_counts, "domains": domain_nodes}
 
 
 def _duration_seconds(created_at: str | None, updated_at: str | None) -> int:
@@ -278,6 +437,10 @@ class SqliteStore:
         events = await self.get_step_events(run_id, limit=1000)
         result["activity_log"] = [e["label"] for e in events if e["event_type"] == "progress"]
         result.update(_compute_collect_progress(events, result.get("stage")))
+        # Live stem→leaf collection plan with per-tool-call status, for the frontend
+        # tree that replaces the flat sources panel during collection / at Gate 2.
+        plan = (result.get("plans") or [None])[0]
+        result["collection_plan"] = build_collection_plan(plan, events)
         return result
 
     async def list_runs(self, limit: int = 100) -> list[dict]:
@@ -352,16 +515,42 @@ class SqliteStore:
             )
             await db.commit()
 
-    async def get_step_events(self, run_id: str, limit: int = 500) -> list[dict]:
+    async def get_step_events(
+        self, run_id: str, limit: int | None = 500, order: str = "asc"
+    ) -> list[dict]:
+        """order='asc' (default) is chronological, required by callers that derive
+        progress/collection-plan state from event sequence. order='desc' is for
+        display (e.g. the Testing page log viewer), which wants newest-first and
+        no limit so no events are silently dropped."""
+        direction = "DESC" if order == "desc" else "ASC"
+        sql = f"SELECT id,ts,level,stage,domain,event_type,label,detail FROM step_events WHERE run_id=? ORDER BY id {direction}"
+        params: tuple = (run_id,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (run_id, limit)
         async with aiosqlite.connect(self._path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT id,ts,level,stage,domain,event_type,label,detail "
-                "FROM step_events WHERE run_id=? ORDER BY id LIMIT ?",
-                (run_id, limit),
-            )
+            cursor = await db.execute(sql, params)
             rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_last_activity_ts(self, run_id: str) -> float | None:
+        """Epoch seconds of the most recent step_event for a run, or None if the run
+        has logged nothing yet. step_events are written on every tool call/error and
+        progress milestone, so this is the run's 'last sign of life' — used by the
+        stall watchdog. ts is stored as an ISO-8601 UTC string, which sorts
+        chronologically, so MAX(ts) gives the latest."""
+        async with aiosqlite.connect(self._path) as db:
+            async with db.execute(
+                "SELECT MAX(ts) FROM step_events WHERE run_id=?", (run_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return datetime.fromisoformat(row[0]).timestamp()
+        except ValueError:
+            return None
 
     async def wipe_session(self, session_id: str) -> None:
         """Delete session_figures for all runs belonging to the session."""

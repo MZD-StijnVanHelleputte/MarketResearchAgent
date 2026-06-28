@@ -10,17 +10,33 @@ import logging
 import re
 
 from config import settings
+from core.domains import leaf_tools
 from core.tot.schemas import (
     CandidatePlan,
     ConsolidatedPlan,
     DATASET_OWNERSHIP_PRIORITY,
     PlannedToolCall,
     ResearchContext,
+    ResearchLeaf,
 )
 from models.llm_client import LLMClient
 from prompts.plan_merge_prompt import plan_merge_messages
+from services.masterdata_service import MasterDataService
 
 logger = logging.getLogger(__name__)
+
+# Each entity_manifest bucket maps to the domain + leaf type used when an entity
+# is *not* found in master data (a research-surfaced rival, mine site, country, …).
+# Master-data entities are resolved canonically instead (resolve_entity), which is
+# what makes a company live under exactly one domain.
+_MANIFEST_BUCKETS: list[tuple[str, str, str]] = [
+    ("competitors", "competition", "company"),
+    ("operators", "mining_operators", "company"),
+    ("demand_side_companies", "general_search", "company"),
+    ("commodities", "commodities", "commodity"),
+    ("mine_sites", "mining_projects", "mine_site"),
+    ("regions", "macroeconomics", "country"),
+]
 
 # Tool names whose schema takes a single `ticker` string argument — these are
 # expanded to one call per tracked ticker so coverage doesn't depend on the
@@ -93,7 +109,7 @@ def _dedupe_cross_domain(calls: list[PlannedToolCall]) -> list[PlannedToolCall]:
     """Collapse identical tool+params calls that were assigned to more than one
     domain, keeping only the highest-priority domain's copy (DATASET_OWNERSHIP_PRIORITY).
 
-    Without this, e.g. both "commodities" and "macro_geopolitics" can independently
+    Without this, e.g. both "commodities" and "macroeconomics" can independently
     call get_mining_metals_prices(COPPER) for the same plan, doubling the API call
     and producing the same data in two report chapters.
     """
@@ -107,6 +123,81 @@ def _dedupe_cross_domain(calls: list[PlannedToolCall]) -> list[PlannedToolCall]:
         ):
             best[key] = tc
     return list(best.values())
+
+
+def _slug_key(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    return slug or label.lower()
+
+
+def _build_leaves(
+    entity_manifest: dict, masterdata: MasterDataService
+) -> list[ResearchLeaf]:
+    """Turn the flat entity manifest into the structured stem→leaf plan.
+
+    Every entity is resolved against master data first: a hit pins it to its
+    canonical domain + leaf type (so Caterpillar can only ever be a `competition`
+    company leaf), and a miss falls back to the manifest bucket it came from.
+    Leaves are de-duplicated by (domain, key); each leaf's tools come from its
+    leaf type (core/domains.LEAF_TOOLSETS), making collection an execution phase.
+    """
+    leaves: dict[tuple[str, str], ResearchLeaf] = {}
+    order: list[tuple[str, str]] = []
+
+    def add(label: str, domain: str, leaf_type: str, key: str, params: dict) -> None:
+        dk = (domain, key)
+        if dk in leaves:
+            return
+        leaves[dk] = ResearchLeaf(
+            key=key, label=label, leaf_type=leaf_type, domain=domain,
+            tools=leaf_tools(leaf_type), params=params,
+        )
+        order.append(dk)
+
+    for bucket, fb_domain, fb_leaf_type in _MANIFEST_BUCKETS:
+        for raw in entity_manifest.get(bucket) or []:
+            label = str(raw).strip()
+            if not label:
+                continue
+            res = masterdata.resolve_entity(label)
+            if res is not None:
+                add(res.label, res.domain, res.leaf_type, res.key, dict(res.params))
+            else:
+                add(label, fb_domain, fb_leaf_type, _slug_key(label), {})
+
+    # Bare tickers only contribute a leaf when they resolve to a known entity;
+    # unresolved tickers are still covered by per-ticker tool-call expansion.
+    for t in entity_manifest.get("tickers") or []:
+        tk = str(t).strip()
+        if not tk:
+            continue
+        res = masterdata.resolve_entity(tk)
+        if res is not None:
+            add(res.label, res.domain, res.leaf_type, res.key, dict(res.params))
+
+    return [leaves[k] for k in order]
+
+
+def _recanonicalize_calls(
+    calls: list[PlannedToolCall], masterdata: MasterDataService
+) -> list[PlannedToolCall]:
+    """Override each ticker-scoped call's domain with the entity's canonical domain.
+
+    This is the execution-side half of the de-overlap fix: a `get_company_financials`
+    call for CAT that the planner tagged "mining_operators" is moved to "competition"
+    because Caterpillar resolves there in master data. Calls whose params don't name a
+    resolvable entity (commodity symbols, FRED series, free-text queries) keep the
+    planner's domain.
+    """
+    out: list[PlannedToolCall] = []
+    for tc in calls:
+        ticker = tc.params.get("ticker")
+        if ticker:
+            res = masterdata.resolve_entity(str(ticker))
+            if res is not None and res.domain != tc.domain:
+                tc = tc.model_copy(update={"domain": res.domain})
+        out.append(tc)
+    return out
 
 
 def _parse_consolidated_json(raw: str) -> dict:
@@ -171,11 +262,18 @@ def _fallback_merge(
 
     planned_calls = _expand_per_ticker_calls(planned_calls, entity_manifest)
 
+    masterdata = MasterDataService()
+    planned_calls = _recanonicalize_calls(planned_calls, masterdata)
+    planned_calls = _dedupe_cross_domain(planned_calls)
+    leaves = _build_leaves(entity_manifest, masterdata)
+    domains = sorted({lf.domain for lf in leaves} | set(domains))
+
     return ConsolidatedPlan(
         plan_id=f"consolidated-{run_id}",
         source_plan_ids=[p.plan_id for p in survivors],
         domains_active=domains,
         entity_manifest=entity_manifest,
+        leaves=leaves,
         planned_tool_calls=planned_calls,
         research_findings=research_context.news_signals[0] if research_context.news_signals else "",
         rationale=top.rationale,
@@ -248,12 +346,16 @@ class PlanMerger:
             planned_calls = _expand_per_ticker_calls(
                 planned_calls, {"tickers": research_context.tickers},
             )
-            # The LLM merger is asked to dedupe tool calls but isn't reliable about
-            # catching the same tool+params assigned to two different domains under
-            # different "angles" — enforce that deterministically.
+            # Override each ticker-scoped call's domain with the entity's canonical
+            # domain from master data, then collapse the same tool+params assigned
+            # to two domains. Together these guarantee a company's calls land under
+            # exactly one domain regardless of how the LLM tagged them.
+            masterdata = MasterDataService()
+            planned_calls = _recanonicalize_calls(planned_calls, masterdata)
             planned_calls = _dedupe_cross_domain(planned_calls)
             consolidated = ConsolidatedPlan(
-                **{k: v for k, v in data.items() if k in ConsolidatedPlan.model_fields},
+                **{k: v for k, v in data.items()
+                   if k in ConsolidatedPlan.model_fields and k != "leaves"},
                 planned_tool_calls=planned_calls,
             )
             # The LLM may omit demand-side consumers from its manifest; carry them
@@ -262,6 +364,12 @@ class PlanMerger:
                 consolidated.entity_manifest.setdefault(
                     "demand_side_companies", research_context.demand_side_companies
                 )
+            # Build the structured stem→leaf plan from the (now complete) manifest
+            # and align domains_active with the domains the leaves actually cover.
+            consolidated.leaves = _build_leaves(consolidated.entity_manifest, masterdata)
+            consolidated.domains_active = sorted(
+                {lf.domain for lf in consolidated.leaves} | set(consolidated.domains_active)
+            )
             return consolidated
         except Exception as exc:
             logger.warning("PlanMerger: LLM merge failed (%s) — using fallback deterministic merge", exc)
@@ -278,7 +386,7 @@ class PlanMerger:
             parts.append(f"Mining operators: {', '.join(ctx.operators)}")
         if ctx.demand_side_companies:
             parts.append(
-                "Demand-side consumers (route to macro_geopolitics): "
+                "Demand-side consumers (route to general_search): "
                 + ", ".join(ctx.demand_side_companies)
             )
         if ctx.tickers:

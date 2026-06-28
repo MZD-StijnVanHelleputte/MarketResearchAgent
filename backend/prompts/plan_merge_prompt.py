@@ -17,9 +17,9 @@ or in the pre-planning research findings. Use the resolved tickers and symbols \
 Where two survivors call the same tool with different arguments, merge the \
 argument sets (e.g. combine ticker lists). Eliminate exact duplicates, including \
 when the SAME tool+arguments appears under two different domains (e.g. a commodity \
-price call tagged "commodities" in one survivor and "macro_geopolitics" in another) \
+price call tagged "commodities" in one survivor and "macroeconomics" in another) \
 — keep it only under the domain that most directly owns that data type (commodity \
-prices -> commodities; operator equity/financials -> customers/mining_projects). \
+prices -> commodities; operator equity/financials -> mining_operators). \
 Each call must have a specific value for every required parameter — no placeholders.
 4. CONFLICTS — when plans disagree on scope, prefer the highest-feasibility plan's \
 judgement and note the trade-off in the rationale.
@@ -31,7 +31,7 @@ Respond with ONLY a JSON object in this exact format (no other text):
 {{
   "plan_id": "consolidated-PLACEHOLDER",
   "source_plan_ids": ["plan_001", "plan_002", "plan_003"],
-  "domains_active": ["competition", "commodities", "macro_geopolitics"],
+  "domains_active": ["commodities", "competition", "macroeconomics"],
   "entity_manifest": {{
     "companies": ["Caterpillar Inc. (CAT)", "Barrick Gold Corp. (GOLD)"],
     "tickers": ["CAT", "GOLD", "NEM"],

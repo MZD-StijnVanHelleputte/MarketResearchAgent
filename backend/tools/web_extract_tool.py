@@ -1,13 +1,17 @@
 import dataclasses
-from pydantic import BaseModel, Field
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, field_validator
 from tools.base import BaseTool
 from services.web_search_service import WebSearchService
 
 
 class WebExtractInput(BaseModel):
-    urls: str = Field(
+    urls: list[str] = Field(
+        min_length=1,
+        max_length=20,
         description=(
-            "Comma-separated URLs to extract content from (up to 20). "
+            "URLs to extract content from (up to 20). "
             "Typically used after web_search returns links you want to read in full — "
             "e.g. competitor press releases, mining project announcement pages, "
             "regulatory filings or IR pages."
@@ -29,6 +33,25 @@ class WebExtractInput(BaseModel):
         ),
     )
 
+    @field_validator("urls", mode="before")
+    @classmethod
+    def normalize_urls(cls, value):
+        if isinstance(value, str):
+            value = [u.strip() for u in value.split(",") if u.strip()]
+        return value
+
+    @field_validator("urls")
+    @classmethod
+    def validate_urls(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for url in value:
+            candidate = url.strip()
+            parsed = urlparse(candidate)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(f"Invalid URL: {url}")
+            cleaned.append(candidate)
+        return cleaned
+
 
 class WebExtractTool(BaseTool):
     name = "web_extract"
@@ -46,9 +69,8 @@ class WebExtractTool(BaseTool):
 
     async def run(self, **kwargs) -> dict:
         inp = WebExtractInput(**kwargs)
-        url_list = [u.strip() for u in inp.urls.split(",") if u.strip()]
         pages = await self._service.extract(
-            urls=url_list,
+            urls=inp.urls,
             query=inp.query,
             extract_depth=inp.extract_depth,
         )

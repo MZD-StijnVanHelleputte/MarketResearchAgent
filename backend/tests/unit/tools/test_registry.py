@@ -31,7 +31,7 @@ def test_get_equity_financials_by_name():
 
 
 def test_domain_tools_reference_equity_financials():
-    for domain in ("competition", "customers", "mining_projects"):
+    for domain in ("competition", "mining_operators", "construction_companies", "specialized_customers"):
         assert "get_equity_financials" in registry.DOMAIN_TOOLS[domain]
 
 
@@ -52,7 +52,8 @@ def test_all_tools_includes_new_news_tools():
 
 
 def test_domain_tools_reference_new_news_tools():
-    for domain in ("competition", "distributors", "customers", "mining_projects", "macro_geopolitics", "general_search"):
+    for domain in ("competition", "distributors", "mining_operators",
+                   "construction_companies", "specialized_customers", "general_search"):
         assert "news_top_headlines" in registry.DOMAIN_TOOLS[domain]
     assert "news_sources" in registry.DOMAIN_TOOLS["general_search"]
 

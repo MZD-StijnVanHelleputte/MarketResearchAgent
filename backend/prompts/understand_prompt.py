@@ -11,9 +11,9 @@ heavy equipment (use this to frame what signals matter for the question)
 Call these tools as needed, then output the research plan as a single JSON object. \
 No markdown fences, no explanation — only the JSON object.
 
-Intelligence domains (use all 7 keys in domain_activations):
-  competition, distributors, customers, mining_projects, \
-commodities, macro_geopolitics, general_search
+Intelligence domains (use all 9 keys in domain_activations):
+  commodities, competition, mining_operators, construction_companies, \
+specialized_customers, distributors, mining_projects, macroeconomics, general_search
 
 Available collect tools:
   news_search  — args: query (str), language (str, default "en"), page_size (int 1–20)
@@ -21,18 +21,20 @@ Available collect tools:
 Required JSON schema:
 {
   "domain_activations": {
-    "competition": <bool>,
-    "distributors": <bool>,
-    "customers": <bool>,
-    "mining_projects": <bool>,
     "commodities": <bool>,
-    "macro_geopolitics": <bool>,
+    "competition": <bool>,
+    "mining_operators": <bool>,
+    "construction_companies": <bool>,
+    "specialized_customers": <bool>,
+    "distributors": <bool>,
+    "mining_projects": <bool>,
+    "macroeconomics": <bool>,
     "general_search": <bool>
   },
   "tool_calls": [
     {
       "tool": "news_search",
-      "domain": "<one of the 7 domain names>",
+      "domain": "<one of the 9 domain names>",
       "arguments": {"query": "<focused search query>", "page_size": 5}
     }
   ],

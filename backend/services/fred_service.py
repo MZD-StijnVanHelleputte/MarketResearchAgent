@@ -105,6 +105,9 @@ class FredService:
         units: str = "lin",
         frequency: str | None = None,
     ) -> FredObservationsResult:
+        # FRED series_ids are canonically uppercase; a mixed-case guess is silently mapped
+        # to an all-missing series instead of erroring, so normalise before the call.
+        series_id = series_id.strip().upper()
         try:
             obs_raw, info_raw = await asyncio.gather(
                 self._client.get_observations_extended(
@@ -130,6 +133,11 @@ class FredService:
             )
             for o in obs_raw.get("observations", [])
         ]
+
+        # All-missing windows (every value ".") are not a successful fetch — fail so the
+        # agent treats it as a miss rather than reporting an empty series as real data.
+        if not any(o.value is not None for o in observations):
+            raise ServiceError(f"FRED series '{series_id}' returned no usable observations.")
 
         return FredObservationsResult(
             series_id=series_id,

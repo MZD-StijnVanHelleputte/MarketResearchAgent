@@ -88,6 +88,62 @@ async def test_get_financials_returns_list_annual():
     assert result[0]["Net Income"] == 100.0
 
 
+def _make_cashflow_df():
+    import pandas as pd
+    from datetime import datetime
+    data = {
+        datetime(2025, 12, 31): {"Capital Expenditure": -2000.0},
+        datetime(2024, 12, 31): {"Capital Expenditure": -1800.0},
+    }
+    return pd.DataFrame(data)
+
+
+@pytest.mark.asyncio
+async def test_get_company_overview_returns_dict():
+    client = YFinanceClient()
+    mock_ticker = MagicMock()
+    mock_ticker.info = {
+        "longName": "Caterpillar Inc", "currentPrice": 380.0, "marketCap": 150e9,
+        "totalRevenue": 67e9, "netIncomeToCommon": 6e9, "trailingPE": 15.2,
+        "financialCurrency": "USD", "industry": "Machinery",
+    }
+    mock_ticker.cashflow = _make_cashflow_df()
+
+    with patch("clients.yfinance_client.asyncio.to_thread") as mock_thread:
+        mock_thread.side_effect = lambda fn: fn()
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            result = await client.get_company_overview("CAT")
+
+    assert result["symbol"] == "CAT"
+    assert result["name"] == "Caterpillar Inc"
+    assert result["price"] == 380.0
+    assert result["market_cap"] == 150e9
+    assert result["revenue"] == 67e9
+    assert result["net_income"] == 6e9
+    assert result["pe_ratio"] == 15.2
+    assert result["capex"] == -2000.0  # latest period from cashflow
+    assert result["currency"] == "USD"
+    assert result["industry"] == "Machinery"
+
+
+@pytest.mark.asyncio
+async def test_get_company_overview_tolerates_missing_fields():
+    client = YFinanceClient()
+    mock_ticker = MagicMock()
+    mock_ticker.info = {}
+    mock_ticker.cashflow = None
+
+    with patch("clients.yfinance_client.asyncio.to_thread") as mock_thread:
+        mock_thread.side_effect = lambda fn: fn()
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            result = await client.get_company_overview("XYZ")
+
+    assert result["name"] is None
+    assert result["revenue"] is None
+    assert result["capex"] is None
+    assert result["currency"] == "USD"  # default
+
+
 @pytest.mark.asyncio
 async def test_get_financials_uses_quarterly_financials():
     client = YFinanceClient()

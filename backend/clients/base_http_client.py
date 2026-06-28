@@ -34,12 +34,14 @@ class BaseHttpClient:
         timeout_s: int = 10,
         max_retries: int = 3,
         rate_limit_per_min: int = 60,
+        backoff_cap_s: float = 30.0,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._timeout_s = timeout_s
         self._max_retries = max_retries
         self._rate_limit_per_min = rate_limit_per_min
+        self._backoff_cap_s = backoff_cap_s
 
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout_s)
 
@@ -72,8 +74,9 @@ class BaseHttpClient:
         return {}
 
     async def _backoff(self, attempt: int) -> None:
-        """Exponential backoff with jitter so parallel clients don't retry in lockstep."""
-        await asyncio.sleep(2 ** attempt + random.uniform(0, 0.5))
+        """Exponential backoff with jitter so parallel clients don't retry in lockstep.
+        Capped at backoff_cap_s so rate-limited clients fail fast to their fallback."""
+        await asyncio.sleep(min(2 ** attempt, self._backoff_cap_s) + random.uniform(0, 0.5))
 
     async def get(self, path: str, params: dict | None = None) -> dict:
         return await self._with_retries(

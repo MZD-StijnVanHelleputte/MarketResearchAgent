@@ -498,6 +498,63 @@ html, body {
 .chip-commodity { background: #D1FAE5; color: #065F46; }
 .chip-default   { background: #F3F4F6; color: #374151; }
 
+/* ── Collection plan tree (gray=to-do, green=done, red=failed) ── */
+.cp-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.cp-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #6B7280;
+}
+.cp-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.cp-dot-pending { background: #9CA3AF; }
+.cp-dot-success { background: #22C55E; }
+.cp-dot-failed  { background: #EF4444; }
+
+.cp-leaf-type {
+    display: inline-block;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6B7280;
+    background: #EEF0F4;
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+.cp-toolcall {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 0 4px 4px;
+    border-bottom: 1px solid #F3F4F6;
+}
+.cp-toolcall .cp-dot { margin-top: 5px; }
+.cp-toolcall-name { font-size: 0.78rem; font-weight: 500; color: #374151; }
+.cp-toolcall-reason {
+    font-size: 0.7rem;
+    color: #D32F2F;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
 /* ── Archive & Dashboard ────────────────────────────────────── */
 .report-card-query {
     font-size: 0.875rem;

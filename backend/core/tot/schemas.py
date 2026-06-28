@@ -1,19 +1,14 @@
 from pydantic import BaseModel, Field, field_validator
 
+from core.domains import ownership_order
+
 # Tie-break order when the same dataset/tool call could be attributed to more than
 # one domain (e.g. a commodity price series pulled by both "commodities" and
-# "macro_geopolitics"). Earlier entries win. Shared by plan_merger.py (dedup before
-# collection) and reports/pdf_generator.py (dedup at render time) so both stages
-# agree on which domain owns a given series.
-DATASET_OWNERSHIP_PRIORITY = [
-    "commodities",
-    "competition",
-    "customers",
-    "distributors",
-    "mining_projects",
-    "macro_geopolitics",
-    "general_search",
-]
+# "general_search"). Earlier entries win. Sourced from the domain registry
+# (core/domains.py) and shared by plan_merger.py (dedup before collection) and
+# reports/pdf_generator.py (dedup at render time) so both stages agree on which
+# domain owns a given series.
+DATASET_OWNERSHIP_PRIORITY = ownership_order()
 
 
 class CandidatePlan(BaseModel):
@@ -66,12 +61,30 @@ class PlannedToolCall(BaseModel):
     rationale: str = ""
 
 
+class ResearchLeaf(BaseModel):
+    """One unit of research within a domain (a stem): a company, country,
+    commodity, mine site, or topic. The leaf's ``leaf_type`` deterministically
+    selects its ``tools`` (see core/domains.LEAF_TOOLSETS), so collection is an
+    execution phase. ``domain`` is canonical — for master-data entities it comes
+    from MasterDataService.resolve_entity, which forbids the same entity from
+    appearing under two domains.
+    """
+    key: str                                   # stable key, e.g. "CAT"
+    label: str                                 # human label, e.g. "Caterpillar Inc."
+    leaf_type: str                             # "company" / "country" / "commodity" / …
+    domain: str                                # canonical owning domain
+    tools: list[str] = Field(default_factory=list)
+    params: dict = Field(default_factory=dict)  # e.g. {"ticker": "CAT"}
+    rationale: str = ""
+
+
 class ConsolidatedPlan(BaseModel):
     """Single merged plan produced from TOT_SURVIVORS, shown at Gate 1."""
     plan_id: str
     source_plan_ids: list[str] = Field(default_factory=list)
     domains_active: list[str] = Field(default_factory=list)
     entity_manifest: dict = Field(default_factory=dict)
+    leaves: list[ResearchLeaf] = Field(default_factory=list)
     planned_tool_calls: list[PlannedToolCall] = Field(default_factory=list)
     research_findings: str = ""
     rationale: str = ""

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.competition_agent import CompetitionAgent
+from agents import make_domain_agent
 from core.schemas import ChapterDraft
 
 
@@ -40,7 +40,7 @@ async def test_competition_agent_returns_chapter_draft():
     with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value=tool_result)), \
          patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
          patch("agents.base_domain_agent.LLM"):
-        agent = CompetitionAgent()
+        agent = make_domain_agent("competition")
         draft = await agent.run(plan, "run_001")
 
     assert isinstance(draft, ChapterDraft)
@@ -60,7 +60,7 @@ async def test_competition_agent_fallback_on_crew_failure():
     with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value=tool_result)), \
          patch("agents.base_domain_agent.Crew", return_value=crew_mock), \
          patch("agents.base_domain_agent.LLM"):
-        agent = CompetitionAgent()
+        agent = make_domain_agent("competition")
         draft = await agent.run(plan, "run_001")
 
     assert isinstance(draft, ChapterDraft)
@@ -80,7 +80,7 @@ async def test_competition_agent_empty_plan_returns_placeholder():
     }
 
     with patch("agents.base_domain_agent.LLM"):
-        agent = CompetitionAgent()
+        agent = make_domain_agent("competition")
         draft = await agent.run(plan, "run_001")
 
     assert isinstance(draft, ChapterDraft)

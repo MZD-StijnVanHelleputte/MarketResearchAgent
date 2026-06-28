@@ -21,6 +21,41 @@ class YFinanceClient:
 
         return await asyncio.to_thread(_fetch)
 
+    async def get_company_overview(self, ticker: str) -> dict:
+        """Return a one-shot financial summary (name, price, market cap, revenue, net income,
+        capex, P/E, currency, industry) from yfinance — the free, no-rate-limit fallback for
+        FMP's get_company_financials. Missing fields come back as None."""
+        def _fetch():
+            import yfinance as yf
+            t = yf.Ticker(ticker)
+            info = t.info or {}
+
+            capex = None
+            try:
+                cf = t.cashflow
+                if cf is not None and not cf.empty and "Capital Expenditure" in cf.index:
+                    val = cf.loc["Capital Expenditure"].iloc[0]  # latest period
+                    if val is not None and val == val:  # filter NaN
+                        capex = round(float(val), 2)
+            except Exception:
+                pass  # capex is best-effort; profile fields are what matter
+
+            return {
+                "symbol": ticker.upper(),
+                "name": info.get("longName") or info.get("shortName"),
+                "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+                "market_cap": info.get("marketCap"),
+                "revenue": info.get("totalRevenue"),
+                "net_income": info.get("netIncomeToCommon"),
+                "capex": capex,
+                "pe_ratio": info.get("trailingPE"),
+                "currency": info.get("financialCurrency") or info.get("currency") or "USD",
+                "industry": info.get("industry"),
+                "date": date.today().isoformat(),
+            }
+
+        return await asyncio.to_thread(_fetch)
+
     async def get_financials(self, ticker: str, period: str = "annual") -> list[dict]:
         """Return income-statement line items per period. period: annual | quarterly."""
         def _fetch():

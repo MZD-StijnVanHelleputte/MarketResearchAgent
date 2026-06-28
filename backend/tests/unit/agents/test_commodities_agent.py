@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.commodities_agent import CommoditiesAgent
+from agents import make_domain_agent
 from core.schemas import ChapterDraft
 
 _DOMAIN = "commodities"
@@ -38,7 +38,7 @@ async def test_returns_chapter_draft():
          patch("agents.base_domain_agent.Task"), \
          patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await CommoditiesAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.domain == _DOMAIN
     assert draft.figures.get("copper_spot_usd_per_lb") == "4.12"
@@ -52,7 +52,7 @@ async def test_fallback_on_crew_failure():
     with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value={"symbol": "COPPER", "latest": {"value": 4.12}})), \
          patch("agents.base_domain_agent.Crew", return_value=cm), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await CommoditiesAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.text
 
@@ -63,7 +63,7 @@ async def test_tool_calls_run_concurrently():
     delay = 0.05
     plan = _make_plan([f"tool_{i}" for i in range(6)])
 
-    async def _slow_route(_name, _args):
+    async def _slow_route(_name, _args, _call_id=None, count_failures=True):
         await asyncio.sleep(delay)
         return {"symbol": "COPPER", "latest": {"value": 4.12}}
 
@@ -73,7 +73,7 @@ async def test_tool_calls_run_concurrently():
          patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
          patch("agents.base_domain_agent.LLM"):
         start = time.monotonic()
-        await CommoditiesAgent().run(plan, "run_001")
+        await make_domain_agent(_DOMAIN).run(plan, "run_001")
         elapsed = time.monotonic() - start
 
     # Sequential execution would take ~6*delay; bounded concurrency (3) takes ~2*delay.
@@ -84,5 +84,5 @@ async def test_tool_calls_run_concurrently():
 async def test_empty_plan_returns_placeholder():
     plan = {"plan_id": "plan_x", "domain_activations": {}, "tool_calls": []}
     with patch("agents.base_domain_agent.LLM"):
-        draft = await CommoditiesAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert "No tool calls" in draft.text

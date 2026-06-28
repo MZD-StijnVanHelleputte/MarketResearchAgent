@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
@@ -80,6 +81,11 @@ async def approve_gate(
 
     session_id = run.get("session_id", "")
     query = run.get("query", "")
+    await store.log_step_event(
+        run_id=run_id, ts=datetime.now(timezone.utc).isoformat(), level="info",
+        stage="", domain="", event_type="progress",
+        label=f"Gate {gate} approved.", detail=None,
+    )
     await store.upsert_run(
         run_id, session_id, query,
         status="running",
@@ -111,6 +117,11 @@ async def redirect_gate(
     session_id = run.get("session_id", "")
     query = run.get("query", "")
     redirect_stage = {1: "understand", 2: "collect", 3: "synthesize"}.get(gate, "understand")
+    await store.log_step_event(
+        run_id=run_id, ts=datetime.now(timezone.utc).isoformat(), level="info",
+        stage="", domain="", event_type="progress",
+        label=f"Gate {gate} redirected — back to {redirect_stage}.", detail=None,
+    )
     await store.upsert_run(
         run_id, session_id, query,
         status="running",
@@ -223,6 +234,56 @@ async def stop_after_timeout(
     query = run.get("query", "")
     await store.upsert_run(run_id, session_id, query, status="running", stage=run.get("stage", ""))
     background_tasks.add_task(_resume_graph, run_id, session_id, query, "redirect")
+    return GateDecisionResponse(run_id=run_id, gate=0, decision="redirect", next_status="running")
+
+
+# ── Stall confirmation (watchdog) ────────────────────────────────────────────
+
+@router.post("/runs/{run_id}/stall_confirm/continue", response_model=GateDecisionResponse)
+async def continue_after_stall(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+) -> GateDecisionResponse:
+    """User chose to keep waiting after the stall prompt. The run keeps going; the
+    watchdog's idle clock is reset so it won't immediately re-prompt."""
+    from api.routers.chat import stall_continue  # delayed import avoids circular dependency
+
+    store = SqliteStore()
+    run = await store.get_run(run_id)
+    if run is None or run.get("status") != "waiting_stall_confirm":
+        raise HTTPException(
+            status_code=404,
+            detail="Run not found or not paused at a stall prompt",
+        )
+    session_id = run.get("session_id", "")
+    query = run.get("query", "")
+    await store.upsert_run(run_id, session_id, query, status="running",
+                           stage=run.get("stage", ""), gate_data=None)
+    background_tasks.add_task(stall_continue, run_id, session_id, query)
+    return GateDecisionResponse(run_id=run_id, gate=0, decision="approve", next_status="running")
+
+
+@router.post("/runs/{run_id}/stall_confirm/finalize", response_model=GateDecisionResponse)
+async def finalize_after_stall(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+) -> GateDecisionResponse:
+    """User chose to finalize the stalled phase. Cancel the in-flight (possibly hung)
+    work and push the run to a partial report + the next gate."""
+    from api.routers.chat import _finalize_stalled  # delayed import avoids circular dependency
+
+    store = SqliteStore()
+    run = await store.get_run(run_id)
+    if run is None or run.get("status") != "waiting_stall_confirm":
+        raise HTTPException(
+            status_code=404,
+            detail="Run not found or not paused at a stall prompt",
+        )
+    session_id = run.get("session_id", "")
+    query = run.get("query", "")
+    await store.upsert_run(run_id, session_id, query, status="running",
+                           stage=run.get("stage", ""), gate_data=None)
+    background_tasks.add_task(_finalize_stalled, run_id, session_id, query)
     return GateDecisionResponse(run_id=run_id, gate=0, decision="redirect", next_status="running")
 
 

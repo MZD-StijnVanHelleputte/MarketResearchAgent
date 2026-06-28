@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from api.schemas.chat import ChatRequest, ChatResponse
@@ -9,6 +10,7 @@ from config import settings
 from core.event_logger import log_event, set_run_context
 from core import graph as graph_module
 from core.graph import AgentState
+from core import tool_circuit_breaker as breaker
 from memory.sqlite_store import SqliteStore
 from langgraph.types import Command
 
@@ -16,11 +18,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
+# run_id → the asyncio.Task currently streaming that run's graph. The stall-watchdog
+# "finalize" action needs a handle to cancel a hung run, and HTTP endpoints run in a
+# different request context, so the handle lives here at module scope.
+_run_tasks: dict[str, asyncio.Task] = {}
+
 _NODE_MESSAGES: dict[str, str] = {
     "understand":    "Analyzing your question and building research plans…",
+    "gate1":         "Awaiting your review of the research plan…",
     "collect":       "Collecting intelligence from data sources…",
     "backtrack":     "Refining research approach…",
     "synthesize":    "Synthesizing findings into intelligence brief…",
+    "gate3":         "Awaiting your review of the intelligence brief…",
     "partial_brief": "Assembling available findings…",
 }
 
@@ -60,6 +69,7 @@ async def start_chat(body: ChatRequest, background_tasks: BackgroundTasks) -> Ch
         "run_start_time": time.time(),
         "paused_seconds": 0.0,
         "timeout_prompt_count": 0,
+        "force_finalize": False,
     }
     await store.upsert_run(
         run_id, session_id, body.query, "running", "understand",
@@ -185,6 +195,7 @@ async def _handle_graph_result(
                 status=f"waiting_gate_{gate_num}",
                 stage=final.get("stage", "understand"),
                 gate_data=gate_data,
+                plans=final.get("plans", []),
                 paused_at=time.time(),
                 **extra_kwargs,
             )
@@ -303,36 +314,110 @@ async def _handle_graph_result(
     return True
 
 
-async def _run_graph(
-    run_id: str,
-    session_id: str,
-    query: str,
-    initial_state: AgentState,
+async def _stall_watchdog(run_id: str, session_id: str, query: str, store: SqliteStore) -> None:
+    """Check every stall_check_interval_s whether the run is still doing work.
+
+    A run is "alive" while it keeps logging step_events (tool calls, errors, progress).
+    If it goes silent for longer than stall_idle_threshold_s while nominally running —
+    a hung tool/LLM call, or a phase that quietly finished — flip it to
+    waiting_stall_confirm so the frontend can prompt the user to keep waiting or
+    finalize. If activity resumes on its own, clear the prompt. Never fires at a human
+    gate (status waiting_*), and the idle threshold sits above the longest legitimately
+    silent single call so a slow-but-healthy request isn't mistaken for a stall.
+    """
+    interval = settings.react.stall_check_interval_s
+    threshold = settings.react.stall_idle_threshold_s
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            row = await store.get_run(run_id)
+            if row is None:
+                continue
+            status = row.get("status")
+            last = await store.get_last_activity_ts(run_id)
+            idle = (time.time() - last) if last else 0.0
+
+            if status == "running" and idle > threshold:
+                minutes = int(idle // 60)
+                stage = row.get("stage", "")
+                await store.upsert_run(
+                    run_id, session_id, query,
+                    status="waiting_stall_confirm",
+                    stage=stage,
+                    gate_data={
+                        "type": "stall_check",
+                        "stage": stage,
+                        "idle_seconds": int(idle),
+                        "message": (
+                            f"The agent has shown no activity for {minutes} minute(s) — "
+                            "this phase may be finished, or a step may be stuck. Keep "
+                            "waiting, or finalize this phase and continue?"
+                        ),
+                    },
+                    paused_at=time.time(),
+                )
+            elif status == "waiting_stall_confirm" and idle <= threshold:
+                # Activity resumed by itself (or the user chose to keep waiting, which
+                # logs a fresh event) — clear the prompt and let the run carry on.
+                await store.upsert_run(
+                    run_id, session_id, query,
+                    status="running", stage=row.get("stage", ""), gate_data=None,
+                )
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("stall watchdog crashed for run %s", run_id)
+
+
+async def _drive_stream(
+    run_id: str, session_id: str, query: str, store: SqliteStore, graph_input,
 ) -> None:
+    """Stream a graph run (fresh, resumed, or finalize-continue) while a stall watchdog
+    runs alongside it. Registers the stream task so a finalize action can cancel it."""
     config = {"configurable": {"thread_id": run_id}}
-    store = SqliteStore()
-    set_run_context(run_id, stage="understand")
 
     async def _stream() -> None:
-        async for event in graph_module.compiled.astream_events(initial_state, config, version="v2"):
+        async for event in graph_module.compiled.astream_events(graph_input, config, version="v2"):
             await _persist_stream_event(event, run_id, session_id, query, store)
 
+    stream_task = asyncio.create_task(_stream())
+    _run_tasks[run_id] = stream_task
+    watchdog = asyncio.create_task(_stall_watchdog(run_id, session_id, query, store))
     try:
-        await asyncio.wait_for(_stream(), timeout=settings.react.hard_time_limit_s)
+        await asyncio.wait_for(stream_task, timeout=settings.react.hard_time_limit_s)
         snapshot = await graph_module.compiled.aget_state(config)
-        final = snapshot.values
-        await _handle_graph_result(final, run_id, session_id, query)
+        await _handle_graph_result(snapshot.values, run_id, session_id, query)
     except asyncio.TimeoutError:
         await store.upsert_run(
             run_id, session_id, query,
             status="timeout", stage="unknown",
             error=f"Run exceeded hard time limit of {settings.react.hard_time_limit_s}s",
         )
+    except asyncio.CancelledError:
+        # The stream task was cancelled by a stall finalize — _finalize_stalled drives
+        # the graph forward itself, so this is expected, not an error.
+        logger.info("graph stream for run %s cancelled (stall finalize)", run_id)
     except Exception as exc:
-        logger.exception("_run_graph failed for run %s", run_id)
+        logger.exception("graph stream failed for run %s", run_id)
         await store.upsert_run(
             run_id, session_id, query, status="error", stage="error", error=str(exc)
         )
+    finally:
+        watchdog.cancel()
+        if _run_tasks.get(run_id) is stream_task:
+            _run_tasks.pop(run_id, None)
+
+
+async def _run_graph(
+    run_id: str,
+    session_id: str,
+    query: str,
+    initial_state: AgentState,
+) -> None:
+    store = SqliteStore()
+    set_run_context(run_id, stage="understand")
+    breaker.reset_run(run_id)  # fresh circuit-breaker state for this run
+    await _drive_stream(run_id, session_id, query, store, initial_state)
 
 
 async def _resume_graph(
@@ -361,23 +446,45 @@ async def _resume_graph(
             update["timeout_prompt_count"] = values.get("timeout_prompt_count", 0) + 1
         await graph_module.compiled.aupdate_state(config, update)
 
-    async def _stream() -> None:
-        async for event in graph_module.compiled.astream_events(Command(resume=decision), config, version="v2"):
-            await _persist_stream_event(event, run_id, session_id, query, store)
+    await _drive_stream(run_id, session_id, query, store, Command(resume=decision))
+
+
+async def stall_continue(run_id: str, session_id: str, query: str) -> None:
+    """Stall prompt → keep waiting. Log a fresh activity event so the watchdog's idle
+    clock resets (giving another full threshold window before it re-prompts) and flip
+    the status back to running. The original stream task was never cancelled, so it
+    simply keeps going."""
+    store = SqliteStore()
+    await store.log_step_event(
+        run_id=run_id, ts=datetime.now(timezone.utc).isoformat(), level="info",
+        stage="", domain="", event_type="progress",
+        label="Continuing — keeping the agent running.", detail=None,
+    )
+    await store.upsert_run(run_id, session_id, query, status="running",
+                           stage=(await store.get_run(run_id) or {}).get("stage", ""))
+
+
+async def _finalize_stalled(run_id: str, session_id: str, query: str) -> None:
+    """Stall prompt → finalize. Cancel the (possibly hung) stream task, set the
+    force_finalize flag in graph state, then re-drive the graph: the pending node
+    re-enters, short-circuits to the partial-brief path, and the run lands on a report
+    + the next gate instead of hanging forever."""
+    config = {"configurable": {"thread_id": run_id}}
+    store = SqliteStore()
+
+    task = _run_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass
 
     try:
-        await asyncio.wait_for(_stream(), timeout=settings.react.hard_time_limit_s)
-        snapshot = await graph_module.compiled.aget_state(config)
-        final = snapshot.values
-        await _handle_graph_result(final, run_id, session_id, query)
-    except asyncio.TimeoutError:
-        await store.upsert_run(
-            run_id, session_id, query,
-            status="timeout", stage="unknown",
-            error=f"Run exceeded hard time limit of {settings.react.hard_time_limit_s}s",
-        )
-    except Exception as exc:
-        logger.exception("_resume_graph failed for run %s", run_id)
-        await store.upsert_run(
-            run_id, session_id, query, status="error", stage="error", error=str(exc)
-        )
+        await graph_module.compiled.aupdate_state(config, {"force_finalize": True})
+    except Exception:
+        logger.exception("_finalize_stalled: failed to set force_finalize for run %s", run_id)
+
+    set_run_context(run_id)
+    # Resume from the last checkpoint (graph_input=None continues the pending node).
+    await _drive_stream(run_id, session_id, query, store, None)

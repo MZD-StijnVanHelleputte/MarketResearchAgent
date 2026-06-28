@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agents.mining_projects_agent import MiningProjectsAgent
+from agents import make_domain_agent
 from core.schemas import ChapterDraft
 
 _DOMAIN = "mining_projects"
@@ -33,7 +33,7 @@ async def test_returns_chapter_draft():
          patch("agents.base_domain_agent.Task"), \
          patch("agents.base_domain_agent.Crew", return_value=_crew_mock()), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await MiningProjectsAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.domain == _DOMAIN
     assert draft.figures.get("new_projects_announced") == "3"
@@ -47,7 +47,7 @@ async def test_fallback_on_crew_failure():
     with patch("agents.base_domain_agent.async_route", new=AsyncMock(return_value={"filings": [{"title": "10-K", "description": "annual report"}]})), \
          patch("agents.base_domain_agent.Crew", return_value=cm), \
          patch("agents.base_domain_agent.LLM"):
-        draft = await MiningProjectsAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert isinstance(draft, ChapterDraft)
     assert draft.text
 
@@ -56,5 +56,5 @@ async def test_fallback_on_crew_failure():
 async def test_empty_plan_returns_placeholder():
     plan = {"plan_id": "plan_x", "domain_activations": {}, "tool_calls": []}
     with patch("agents.base_domain_agent.LLM"):
-        draft = await MiningProjectsAgent().run(plan, "run_001")
+        draft = await make_domain_agent(_DOMAIN).run(plan, "run_001")
     assert "No tool calls" in draft.text

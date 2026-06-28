@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +15,22 @@ logger = logging.getLogger(__name__)
 
 # Absolute path to data/ regardless of working directory
 _DATA_ROOT = Path(__file__).parent.parent / "data"
+
+
+@dataclass(frozen=True)
+class EntityResolution:
+    """The canonical domain an entity belongs to, resolved from master data.
+
+    This is what guarantees one entity → one domain: Caterpillar lives only in
+    competitors.json, so it resolves to ``competition`` and can never become a
+    customer leaf. See core/domains.py for the domain → master-data mapping.
+    """
+
+    label: str        # canonical clean label, e.g. "Caterpillar Inc."
+    domain: str       # canonical domain key, e.g. "competition"
+    leaf_type: str    # "company" / "commodity" / "distributor"
+    key: str          # stable key, e.g. "CAT" or the name
+    params: dict = field(default_factory=dict)  # {"ticker": "CAT"} for companies
 
 
 class MasterDataService:
@@ -28,6 +46,7 @@ class MasterDataService:
         self._construction = self._load("construction/construction.json")
         self._others = self._load("others/others.json")
         self._commodities = self._load_csv(settings.commodity_tickers_path)
+        self._entity_index: dict[str, EntityResolution] | None = None
 
     def _load(self, relative_path: str) -> list[dict]:
         path = _DATA_ROOT / relative_path
@@ -69,6 +88,88 @@ class MasterDataService:
 
     def get_commodities(self) -> list[dict]:
         return self._commodities
+
+    # ------------------------------------------------------------------
+    # Entity resolution — the canonical entity → domain index (de-overlap)
+    # ------------------------------------------------------------------
+    def resolve_entity(self, name_or_ticker: str) -> EntityResolution | None:
+        """Return the canonical (label, domain, leaf_type, …) for a known entity,
+        or None when it isn't in master data (e.g. a research-surfaced rival).
+
+        Tolerates research-context formatting like ``"Caterpillar Inc. (CAT)"`` by
+        also trying the bare name and the parenthesised ticker.
+        """
+        if not name_or_ticker or not str(name_or_ticker).strip():
+            return None
+        index = self._entity_resolution_index()
+        raw = str(name_or_ticker).strip()
+        candidates = [raw]
+        m = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", raw)
+        if m:
+            candidates.append(m.group(1).strip())
+            candidates.append(m.group(2).strip())
+        for cand in candidates:
+            hit = index.get(cand.lower())
+            if hit is not None:
+                return hit
+        return None
+
+    def _entity_resolution_index(self) -> dict[str, EntityResolution]:
+        if self._entity_index is None:
+            self._entity_index = self._build_entity_index()
+        return self._entity_index
+
+    def _build_entity_index(self) -> dict[str, EntityResolution]:
+        # Iterate domains in ownership-priority order so that, if the same alias
+        # ever appears in two master-data files, the higher-priority domain wins
+        # ("first one wins" via the `not in index` guard below).
+        from core.domains import DOMAINS
+
+        index: dict[str, EntityResolution] = {}
+        for spec in sorted(DOMAINS.values(), key=lambda s: s.ownership_priority):
+            if not spec.masterdata_source:
+                continue
+            try:
+                records = self.lookup(spec.masterdata_source)
+            except ValueError:
+                logger.warning(
+                    "masterdata index: domain '%s' references unknown source '%s'",
+                    spec.key, spec.masterdata_source,
+                )
+                continue
+            for record in records:
+                self._index_record(index, record, spec.key, spec.default_leaf_type)
+        return index
+
+    @staticmethod
+    def _index_record(
+        index: dict[str, EntityResolution],
+        record: dict,
+        domain: str,
+        leaf_type: str,
+    ) -> None:
+        # Company files use lowercase name/ticker; commodity CSV uses Name/Ticker.
+        name = str(record.get("name") or record.get("Name") or "").strip()
+        ticker = str(record.get("ticker") or record.get("Ticker") or "").strip()
+        if not name:
+            return
+        if leaf_type == "company" and ticker:
+            params: dict = {"ticker": ticker}
+        elif leaf_type == "commodity" and ticker:
+            params = {"symbol": ticker}
+        else:
+            params = {}
+        resolution = EntityResolution(
+            label=name,
+            domain=domain,
+            leaf_type=leaf_type,
+            key=(ticker.upper() or name),
+            params=params,
+        )
+        for alias in (name, ticker):
+            a = alias.strip().lower()
+            if len(a) >= 2 and a not in index:
+                index[a] = resolution
 
     _ENTITY_MAP: dict[str, str] = {
         "distributors": "_distributors",

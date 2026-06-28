@@ -31,6 +31,9 @@ class MacroService:
         self._client = client or get_fred_client()
 
     async def get_indicator(self, series_id: str, limit: int = 10) -> MacroIndicator:
+        # FRED series_ids are canonically uppercase; the planner often guesses mixed case,
+        # which FRED silently maps to an all-missing series rather than erroring.
+        series_id = series_id.strip().upper()
         try:
             obs_raw, info_raw = await asyncio.gather(
                 self._client.get_observations(series_id, limit),
@@ -49,6 +52,12 @@ class MacroService:
             )
             for o in obs_raw.get("observations", [])
         ]
+
+        # A series with no usable values (FRED returns "." for every observation in the
+        # window) is not a successful fetch — surface it as an error so the agent treats
+        # it as a miss instead of reporting an empty indicator as real data.
+        if not any(o.value is not None for o in observations):
+            raise ServiceError(f"FRED series '{series_id}' returned no usable observations.")
 
         return MacroIndicator(
             series_id=series_id,
