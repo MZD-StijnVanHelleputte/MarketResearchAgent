@@ -227,36 +227,24 @@ For interactive checks, the app's **Testing** page and the backend's `POST /test
 
 ## Strengths, limitations & next steps
 
-> _Starting draft — to be refined by the team._
-
 ### Strengths
 
-- Diverse, cost-bounded planning via Tree-of-Thought (7 proposed → 3 executed).
-- Parallel per-domain collection with an LLM-driven self-repair loop and circuit breaking.
-- Genuine human-in-the-loop control at three decision points.
-- Multi-stage RAG with global citation tracking and prompt-injection filtering.
-- Live progress (plan tree, sources, tokens, cost) streamed to the UI.
-- Resilient by design: budget caps, soft timeout, stall watchdog, and a partial-brief fallback.
-- Single configuration surface and broad tool coverage (financial, news, SEC, FRED, commodities, web).
+- **It works, and the planning is strong.** The system reliably turns a question into a well-defined research plan and — crucially — grounds that plan against the tools that actually exist, so what it sets out to do is genuinely feasible.
+- **It's easy to follow.** Rich visual feedback at every step (the live plan tree, sources, and the three review gates) makes it straightforward to see exactly what the agent is doing and why.
+- **It's extensible through RAG.** The retrieval layer makes it easy to plug in your own custom data and knowledge sources, so the system can be tailored to a specific business context.
 
-### Limitations / not yet working
+### Limitations & next steps
 
-- `POST /chat/stream` is not implemented — the UI relies on 2-second polling.
-- Episodic memory across runs is disabled by default (`STORES__EPISODIC_ENABLED=false`).
-- The LangGraph checkpoint DB is forced outside the project directory because iCloud/Drive-synced folders break SQLite WAL locking.
-- The LLM provider is effectively hard-typed to Mistral; there is no provider abstraction yet.
-- No Docker, CI pipeline, or solution (`.sln`) file.
-- `AGENTS.md` has drifted from the current code in a few places (page count, `mcp/` → `state_bus/`, episodic default, time limits).
-- The 7-plan proposal plus parallel agent fan-out can be costly and slow on broad queries.
+Roughly in priority order, the planned work:
 
-### Next steps
-
-- Implement true streaming (SSE/WebSocket) to replace polling.
-- Add a CI pipeline and containerization.
-- Reconcile `AGENTS.md` with the implemented system.
-- Introduce an LLM-provider abstraction.
-- Harden and enable episodic memory.
-- Build an evaluation harness for plan quality and brief accuracy.
+1. **Tooling** — the most impactful area to improve.
+   - **Fine-tune the unreliable tools.** Each external API defines its endpoints differently, so some tools fail frequently — either returning the wrong data (or none), or driving up latency: the LLM-driven repair loop inspects the API error and retries to fix the call, which recovers the result but costs time. These tools need hardening so they fail less and lean on the repair loop less.
+   - **Upgrade from free to premium API tiers.** The data tools currently run on free plans, with the usual trade-offs — not all endpoints are available, and rate limits throttle collection.
+   - **Add new data sources.** Bring in internal/proprietary data sources we already have, plus high-end commercial providers (e.g. SpecCheck, Oxford Economics).
+2. **Synthesis — apply the Pyramid Principle.** Today the brief tries to cram in every data point it collects, which makes it exhaustive but unfocused; it should deliberately leave low-value points out. A tighter, top-down structure would also make it far easier to surface **cross-domain signals** where several domains point to the same underlying problem or opportunity.
+3. **Front-page brief → an agentic newspaper.** The page already exists in the app but is query-driven. The goal is to take it further: a proactive, self-updating market newspaper that queries the underlying tools and data sources on its own and surfaces what's new — market developments, product launches, commodity-market shifts — without the user having to ask.
+4. **Sharper source referencing.** Citation handling in the final document does the job but isn't tight — it often omits many of the sources the brief actually drew on. Attribution coverage needs to be made more complete and precise.
+5. **GUI bug fixes.** A handful of bugs remain in the frontend and still need to be ironed out.
 
 ---
 
